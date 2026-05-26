@@ -14,11 +14,17 @@ html.light {
   color-scheme: light;
 }
 
+html,
+body {
+  min-height: 100%;
+}
+
 body {
   @apply min-h-screen bg-slate-950 text-slate-100 antialiased;
 }
 
-body::before {
+/* Fundo padrão antigo, usado apenas se o body NÃO tiver app-background */
+body:not(.app-background)::before {
   content: '';
   position: fixed;
   inset: 0;
@@ -35,13 +41,84 @@ html.light body,
   @apply bg-slate-50 text-slate-950;
 }
 
-html.light body::before,
-.light body::before {
+html.light body:not(.app-background)::before,
+.light body:not(.app-background)::before {
   background:
     radial-gradient(circle at 15% 15%, rgba(20, 184, 166, .16), transparent 28%),
     radial-gradient(circle at 80% 10%, rgba(124, 58, 237, .14), transparent 28%),
     radial-gradient(circle at 70% 80%, rgba(245, 158, 11, .12), transparent 30%),
     linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+}
+
+/* Fundo global com imagem */
+body.app-background {
+  min-height: 100vh;
+  background: #020617 !important;
+  position: relative;
+  isolation: isolate;
+}
+
+body.app-background::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+
+  background-image:
+    linear-gradient(
+      135deg,
+      rgba(2, 8, 23, 0.84),
+      rgba(15, 23, 42, 0.74),
+      rgba(30, 27, 75, 0.78)
+    ),
+    url('/images/background.png');
+
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+body.app-background::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+
+  background:
+    radial-gradient(circle at 18% 18%, rgba(16, 185, 129, 0.18), transparent 34%),
+    radial-gradient(circle at 82% 12%, rgba(99, 102, 241, 0.20), transparent 36%),
+    radial-gradient(circle at 50% 90%, rgba(20, 184, 166, 0.10), transparent 40%);
+}
+
+html.light body.app-background,
+.light body.app-background {
+  background: #f8fafc !important;
+}
+
+html.light body.app-background::before,
+.light body.app-background::before {
+  background-image:
+    linear-gradient(
+      135deg,
+      rgba(248, 250, 252, 0.72),
+      rgba(226, 232, 240, 0.58),
+      rgba(219, 234, 254, 0.62)
+    ),
+    url('/images/background.png');
+
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+html.light body.app-background::after,
+.light body.app-background::after {
+  background:
+    radial-gradient(circle at 18% 18%, rgba(16, 185, 129, 0.12), transparent 34%),
+    radial-gradient(circle at 82% 12%, rgba(99, 102, 241, 0.12), transparent 36%),
+    radial-gradient(circle at 50% 90%, rgba(20, 184, 166, 0.08), transparent 40%);
 }
 
 /* Base components */

@@ -46,7 +46,7 @@ export default async function AdminPage({ searchParams }: { searchParams: { log?
             <p className="text-sm uppercase tracking-[.25em] text-emerald-300">Admin</p>
             <h1 className="text-4xl font-black">Painel Race Pulse</h1>
             <p className="mt-2 max-w-2xl text-sm text-slate-400">
-              V4 em modo real: sem seed e sem fallback fake. Se Tavily ou Gemini falhar, nada é salvo e o erro fica no log.
+              Divirta-se e não abuse! cuidado com o uso dos tokens de ambos os serviços!
             </p>
           </div>
           <a href="/" className="btn btn-ghost">Voltar ao site</a>
