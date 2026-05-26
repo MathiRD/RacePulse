@@ -1,0 +1,91 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum EventStatus {
+  UPCOMING
+  LIVE
+  FINISHED
+  CANCELLED
+  UNKNOWN
+}
+
+enum ImportStatus {
+  SUCCESS
+  FAILED
+}
+
+model Event {
+  id            String      @id @default(cuid())
+  sourceKey     String      @unique
+  title         String
+  series        String
+  category      String
+  circuit       String
+  country       String?
+  startsAt      DateTime
+  endsAt        DateTime?
+  status        EventStatus @default(UPCOMING)
+  priority      Int         @default(3)
+  hasBrazilian  Boolean     @default(false)
+  hasVerstappen Boolean     @default(false)
+  sourceUrl     String?
+  notes         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  standings     Standing[]
+
+  @@index([startsAt])
+  @@index([series])
+  @@index([category])
+  @@index([priority])
+}
+
+model Standing {
+  id        String   @id @default(cuid())
+  sourceKey String   @unique
+  eventId   String?
+  series    String
+  category  String
+  position  Int
+  driver    String
+  team      String?
+  car       String?
+  points    Float?
+  gap       String?
+  sourceUrl String?
+  event     Event?   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([series])
+  @@index([category])
+  @@index([position])
+}
+
+model ImportLog {
+  id               String       @id @default(cuid())
+  status           ImportStatus
+  provider         String
+  query            String
+  message          String
+  errorStage       String?
+  errorDetail      String?
+  tavilyStatus     Int?
+  llmModel         String?
+  rawSearchJson    Json?
+  llmRawText       String?
+  parsedJson       Json?
+  eventsCreated    Int          @default(0)
+  eventsUpdated    Int          @default(0)
+  standingsCreated Int          @default(0)
+  standingsUpdated Int          @default(0)
+  startedAt        DateTime     @default(now())
+  finishedAt       DateTime?
+}

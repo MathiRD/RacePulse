@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: race-pulse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: racepulse
+      POSTGRES_PASSWORD: racepulse
+      POSTGRES_DB: racepulse
+    ports:
+      - "5433:5432"
+    volumes:
+      - race_pulse_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U racepulse -d racepulse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  redis:
+    image: redis:7-alpine
+    container_name: race-pulse-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - race_pulse_redis:/data
+volumes:
+  race_pulse_pg:
+  race_pulse_redis:
