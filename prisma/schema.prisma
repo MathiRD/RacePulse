@@ -21,12 +21,23 @@ enum ImportStatus {
   FAILED
 }
 
+enum EventKind {
+  REAL
+  ESPORT
+}
+
+enum StandingKind {
+  ENTRY_LIST
+  STANDINGS
+}
+
 model Event {
   id            String      @id @default(cuid())
   sourceKey     String      @unique
   title         String
   series        String
   category      String
+  eventKind     EventKind   @default(REAL)
   circuit       String
   country       String?
   startsAt      DateTime
@@ -44,26 +55,33 @@ model Event {
   @@index([startsAt])
   @@index([series])
   @@index([category])
+  @@index([eventKind])
   @@index([priority])
 }
 
 model Standing {
-  id        String   @id @default(cuid())
-  sourceKey String   @unique
+  id        String       @id @default(cuid())
+  sourceKey String       @unique
   eventId   String?
+  kind      StandingKind @default(ENTRY_LIST)
+  eventKind EventKind    @default(REAL)
   series    String
   category  String
   position  Int
+  carNumber String?
   driver    String
   team      String?
   car       String?
   points    Float?
   gap       String?
   sourceUrl String?
-  event     Event?   @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  event     Event?       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 
+  @@index([eventId])
+  @@index([kind])
+  @@index([eventKind])
   @@index([series])
   @@index([category])
   @@index([position])

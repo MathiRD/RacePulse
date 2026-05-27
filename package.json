@@ -14,7 +14,8 @@
     "import:debug": "tsx scripts/import-debug.ts",
     "import:dry": "tsx scripts/import-debug.ts --dry-run --force",
     "import:real": "tsx scripts/import-debug.ts --force",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "data:fix-imported": "tsx scripts/fix-imported-data.ts"
   },
   "dependencies": {
     "@google/genai": "^1.0.0",

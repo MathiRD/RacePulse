@@ -4,10 +4,14 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { cache } from '@/lib/cache';
 
+const EVENT_KIND = ['REAL', 'ESPORT'] as const;
+const STANDING_KIND = ['ENTRY_LIST', 'STANDINGS'] as const;
+
 const EventInput = z.object({
   title: z.string().min(2),
   series: z.string().min(2),
   category: z.string().min(1),
+  eventKind: z.enum(EVENT_KIND).default('REAL'),
   circuit: z.string().min(1),
   country: z.string().optional().nullable(),
   startsAt: z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}/)),
@@ -20,9 +24,15 @@ const EventInput = z.object({
 });
 
 const StandingInput = z.object({
+  eventTitle: z.string().optional().nullable(),
+  eventCircuit: z.string().optional().nullable(),
+  eventDate: z.string().optional().nullable(),
   series: z.string().min(2),
   category: z.string().min(1),
-  position: z.number().int().positive(),
+  kind: z.enum(STANDING_KIND).default('ENTRY_LIST'),
+  eventKind: z.enum(EVENT_KIND).default('REAL'),
+  position: z.number().int().positive().default(1),
+  carNumber: z.string().optional().nullable(),
   driver: z.string().min(1),
   team: z.string().optional().nullable(),
   car: z.string().optional().nullable(),
@@ -38,6 +48,17 @@ const ImportPayload = z.object({
 });
 
 type ImportPayloadType = z.infer<typeof ImportPayload>;
+type SearchEvidence = {
+  task: string;
+  provider: string;
+  query: string;
+  rawText: string;
+  rawJson?: unknown;
+  status?: number;
+};
+
+type EventInputType = z.infer<typeof EventInput>;
+type StandingInputType = z.infer<typeof StandingInput>;
 
 export type ImportDebugResult = {
   ok: boolean;
@@ -50,6 +71,73 @@ export type ImportDebugResult = {
   standingsUpdated: number;
   diagnostics: Record<string, unknown>;
 };
+
+const EVENT_BLACKLIST = [
+  'trial',
+  'test day',
+  'test days',
+  'testing',
+  'official test',
+  'prologue',
+  'practice',
+  'free practice',
+  'media day',
+  'track day',
+  'trackday',
+  'pre-event',
+  'pre event',
+  'qualifying',
+  'warm up',
+  'warm-up',
+];
+
+const ESPORT_TERMS = [
+  'esport',
+  'e-sport',
+  'virtual',
+  'sim racing',
+  'simracing',
+  'iracing',
+  'assetto corsa',
+  'racing game',
+  'renn esport',
+];
+
+const OFFICIAL_DOMAINS = [
+  'fiawec.com',
+  '24h-lemans.com',
+  'europeanlemansseries.com',
+  'asianlemansseries.com',
+  'lemanscup.com',
+  'gt-world-challenge-europe.com',
+  'gt-world-challenge-america.com',
+  'gt-world-challenge-asia.com',
+  'intercontinentalgtchallenge.com',
+  'sro-motorsports.com',
+  'britishgt.com',
+  'imsa.com',
+  'nuerburgring-langstrecken-serie.de',
+  '24h-rennen.de',
+  '24hseries.com',
+  'dtm.com',
+  'gtopen.net',
+  'supertaikyu.com',
+  'bathurst12hour.com.au',
+];
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getMinImportDate() {
+  if (process.env.IMPORT_MIN_DATE) {
+    const date = safeDate(process.env.IMPORT_MIN_DATE);
+    if (date) return date;
+  }
+
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+}
 
 function safeDate(value: string | null | undefined) {
   const date = value ? new Date(value) : null;
@@ -71,26 +159,90 @@ function stableKey(parts: Array<string | number | null | undefined>) {
     .digest('hex');
 }
 
-function parseJsonFromText(text: string) {
-  const cleaned = text
+function cleanText(value: unknown) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[’']/g, '')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim()
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/```$/i, '')
-    .trim();
+    .toLowerCase();
+}
 
+function slug(value: unknown) {
+  return cleanText(value).replace(/\s+/g, '-');
+}
+
+function canonicalEventTitle(title: string) {
+  const t = cleanText(title);
+
+  if (/(spa|francorchamps).*(24|twenty four)|24.*(spa|francorchamps)/.test(t)) return '24-hours-of-spa';
+  if (/(nurburgring|nuerburgring).*(24|twenty four)|24.*(nurburgring|nuerburgring)/.test(t)) return '24-hours-of-nurburgring';
+  if (/(le mans).*(24|twenty four)|24.*le mans/.test(t)) return '24-hours-of-le-mans';
+  if (/(daytona).*(24|twenty four)|24.*daytona/.test(t)) return '24-hours-of-daytona';
+  if (/(dubai).*(24|twenty four)|24.*dubai/.test(t)) return '24-hours-of-dubai';
+  if (/(bathurst).*(12|twelve)|12.*bathurst/.test(t)) return 'bathurst-12-hour';
+  if (/(sebring).*(12|twelve)|12.*sebring/.test(t)) return '12-hours-of-sebring';
+  if (/petit.*le.*mans/.test(t)) return 'petit-le-mans';
+  if (/watkins.*glen/.test(t)) return '6-hours-of-watkins-glen';
+
+  return slug(title.replace(/entry list|calendar|schedule|round \d+|race week/gi, ''));
+}
+
+function canonicalCircuit(circuit: string) {
+  const c = cleanText(circuit);
+
+  if (/spa|francorchamps/.test(c)) return 'circuit-de-spa-francorchamps';
+  if (/nurburgring|nuerburgring|nordschleife/.test(c)) return 'nurburgring-nordschleife';
+  if (/le mans|sarthe/.test(c)) return 'circuit-de-la-sarthe';
+  if (/daytona/.test(c)) return 'daytona-international-speedway';
+  if (/sebring/.test(c)) return 'sebring-international-raceway';
+  if (/bathurst|mount panorama/.test(c)) return 'mount-panorama-circuit';
+  if (/paul ricard/.test(c)) return 'circuit-paul-ricard';
+
+  return slug(circuit);
+}
+
+function canonicalCategory(value: string, series = '') {
+  const text = cleanText(`${series} ${value}`);
+
+  if (/lmgt3/.test(text)) return 'LMGT3';
+  if (/gtd pro/.test(text)) return 'GTD Pro';
+  if (/gtd/.test(text)) return 'GTD';
+  if (/sp9/.test(text)) return 'SP9 GT3';
+  if (/gt world challenge.*endurance|endurance cup/.test(text)) return 'GT3 Endurance';
+  if (/gt world challenge.*sprint|sprint cup/.test(text)) return 'GT3 Sprint';
+  if (/gt3/.test(text)) return 'GT3';
+  if (/endurance/.test(text)) return 'Endurance';
+
+  return value.trim() || 'GT3 / Endurance';
+}
+
+function detectEventKind(value: string, sourceUrl?: string | null) {
+  const text = cleanText(`${value} ${sourceUrl || ''}`);
+  return ESPORT_TERMS.some((term) => text.includes(term)) ? 'ESPORT' : 'REAL';
+}
+
+function hasBlacklistedSessionName(value: string) {
+  const text = cleanText(value);
+  return EVENT_BLACKLIST.some((term) => text.includes(cleanText(term)));
+}
+
+function isOfficialSource(url?: string | null) {
+  if (!url) return false;
   try {
-    return JSON.parse(cleaned);
+    const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+    return OFFICIAL_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
   } catch {
-    const firstBrace = cleaned.indexOf('{');
-    const lastBrace = cleaned.lastIndexOf('}');
-
-    if (firstBrace >= 0 && lastBrace > firstBrace) {
-      return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
-    }
-
-    throw new Error(`Gemini retornou texto não-JSON: ${cleaned.slice(0, 800)}`);
+    return false;
   }
+}
+
+function sourceScore(url?: string | null) {
+  if (!url) return 0;
+  return isOfficialSource(url) ? 50 : 10;
 }
 
 function normalizePriority(value: unknown) {
@@ -102,160 +254,126 @@ function normalizePriority(value: unknown) {
   return 3;
 }
 
-function isStandingsQuery(query: string) {
-  const q = query.toLowerCase();
-
-  return [
-    'standings',
-    'standing',
-    'classification',
-    'championship',
-    'points',
-    'pts',
-    'ranking',
-    'rankings',
-    'result',
-    'results',
-    'classificação',
-    'classificacao',
-    'pontuação',
-    'pontuacao',
-    'pontos',
-    'resultado',
-    'resultados',
-  ].some((term) => q.includes(term));
+function stripJsonFence(text: string) {
+  return text
+    .trim()
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```$/i, '')
+    .trim();
 }
 
-function isCalendarQuery(query: string) {
-  const q = query.toLowerCase();
+function extractJsonCandidate(text: string) {
+  const cleaned = stripJsonFence(text);
 
-  return [
-    'calendar',
-    'schedule',
-    'dates',
-    'races',
-    'tracks',
-    'calendário',
-    'calendario',
-    'corridas',
-    'datas',
-    'pistas',
-  ].some((term) => q.includes(term));
-}
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
 
-function isEntryListQuery(query: string) {
-  const q = query.toLowerCase();
-
-  return [
-    'entry list',
-    'drivers',
-    'teams',
-    'cars',
-    'lineup',
-    'line-up',
-    'entry',
-    'entries',
-    'inscritos',
-    'pilotos',
-    'equipes',
-    'carros',
-  ].some((term) => q.includes(term));
-}
-
-function isEntryListCategory(category: unknown) {
-  const value = String(category || '').toLowerCase();
-
-  return [
-    'entry list',
-    'lineup',
-    'line-up',
-    'drivers and teams',
-    'teams and drivers',
-    'race drivers',
-    'grid',
-    'entries',
-    'entry',
-    'inscritos',
-    'lista de entrada',
-  ].some((term) => value.includes(term));
-}
-
-function isTeamOnlyCategory(category: unknown) {
-  const value = String(category || '').toLowerCase();
-
-  return [
-    'constructors championship',
-    'constructor championship',
-    'constructors standings',
-    'constructor standings',
-    'teams championship',
-    'team championship',
-    'teams standings',
-    'team standings',
-    'manufacturers championship',
-    'manufacturer championship',
-    'manufacturers standings',
-    'manufacturer standings',
-    'marques championship',
-    'classificação de construtores',
-    'classificacao de construtores',
-    'classificação de equipes',
-    'classificacao de equipes',
-    'classificação de fabricantes',
-    'classificacao de fabricantes',
-  ].some((term) => value.includes(term));
-}
-
-function isDriverRelatedCategory(category: unknown) {
-  const value = String(category || '').toLowerCase();
-
-  return [
-    'drivers championship',
-    'driver championship',
-    'drivers standings',
-    'driver standings',
-    'overall standings',
-    'overall classification',
-    'overall',
-    'race result',
-    'race results',
-    'qualifying result',
-    'qualifying results',
-    'classification',
-    'standings',
-    'pro',
-    'pro-am',
-    'gold',
-    'gold cup',
-    'silver',
-    'silver cup',
-    'bronze',
-    'bronze cup',
-    'gt3',
-    'lmgt3',
-    'gtd',
-    'gtd pro',
-    'sp9',
-    'classificação de pilotos',
-    'classificacao de pilotos',
-  ].some((term) => value.includes(term));
-}
-
-function looksLikeTeamOnlyStanding(standing: any) {
-  const driver = String(standing?.driver || '').trim();
-  const team = String(standing?.team || '').trim();
-  const car = String(standing?.car || '').trim();
-
-  if (isTeamOnlyCategory(standing?.category)) {
-    return true;
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return cleaned.slice(firstBrace, lastBrace + 1);
   }
 
-  // Exemplo ruim:
-  // driver = "Mercedes"
-  // team = null
-  // car = null
-  // category = "Constructors Championship"
-  return driver !== '' && team === '' && car === '' && isTeamOnlyCategory(standing?.category);
+  return cleaned;
+}
+
+function repairCommonJsonIssues(value: string) {
+  return value
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u0000-\u001F\u007F]/g, (char) => {
+      if (char === '\n' || char === '\r' || char === '\t') return char;
+      return '';
+    })
+    .replace(/,\s*([}\]])/g, '$1')
+    .trim();
+}
+
+function getJsonErrorContext(json: string, error: unknown) {
+  const message = getErrorMessage(error);
+  const positionMatch = message.match(/position\s+(\d+)/i);
+  const position = positionMatch ? Number(positionMatch[1]) : -1;
+
+  if (!Number.isFinite(position) || position < 0) {
+    return `${message}\nTrecho inicial: ${json.slice(0, 1200)}`;
+  }
+
+  const start = Math.max(0, position - 500);
+  const end = Math.min(json.length, position + 500);
+
+  return `${message}\nContexto próximo do erro:\n${json.slice(start, end)}`;
+}
+
+function parseJsonFromText(text: string) {
+  const candidate = repairCommonJsonIssues(extractJsonCandidate(text));
+
+  try {
+    return JSON.parse(candidate);
+  } catch (firstError) {
+    const withoutTrailingCommas = repairCommonJsonIssues(candidate);
+
+    try {
+      return JSON.parse(withoutTrailingCommas);
+    } catch {
+      throw new Error(`Gemini retornou JSON inválido. ${getJsonErrorContext(candidate, firstError)}`);
+    }
+  }
+}
+
+async function parseJsonFromTextWithRepair(rawText: string, ai: GoogleGenAI, model: string) {
+  try {
+    return {
+      json: parseJsonFromText(rawText),
+      repaired: false,
+      repairedText: null as string | null,
+    };
+  } catch (error) {
+    const invalidJson = extractJsonCandidate(rawText);
+    const context = getJsonErrorContext(invalidJson, error);
+
+    const repairPrompt = `
+Repair this invalid JSON and return ONLY valid JSON.
+
+Rules:
+- Do not add facts.
+- Do not remove valid objects unless required to make JSON syntactically valid.
+- Do not use markdown.
+- Keep exactly these top-level keys when present: summary, events, standings.
+- Ensure arrays and objects have commas in the correct places.
+- Ensure all strings are quoted and escaped correctly.
+- Ensure null is used instead of undefined/empty non-JSON values.
+
+Parser error/context:
+${context}
+
+Invalid JSON:
+${invalidJson.slice(0, Number(process.env.IMPORT_JSON_REPAIR_MAX_CHARS || '70000'))}
+`;
+
+    const repairResponse = await generateGeminiWithRetry(ai, {
+      model,
+      contents: repairPrompt,
+      config: {
+        responseMimeType: 'application/json',
+        temperature: 0,
+      },
+    });
+
+    const repairedText = String((repairResponse as any).text || '');
+
+    try {
+      return {
+        json: parseJsonFromText(repairedText),
+        repaired: true,
+        repairedText,
+      };
+    } catch (repairError) {
+      throw new Error(
+        `Gemini retornou JSON inválido e a tentativa de reparo também falhou. ${getJsonErrorContext(
+          extractJsonCandidate(repairedText || invalidJson),
+          repairError,
+        )}`,
+      );
+    }
+  }
 }
 
 function parseNullableNumber(value: unknown) {
@@ -282,129 +400,69 @@ function parsePositivePosition(value: unknown, fallback: number) {
   return fallback;
 }
 
-function buildSearchQuery(query: string) {
-  const q = query.trim();
-
-  if (isStandingsQuery(q)) {
-    return `${q} drivers championship standings classification points table -constructors -constructor -teams -manufacturers`;
-  }
-
-  if (isCalendarQuery(q)) {
-    return `${q} calendar schedule date circuit race`;
-  }
-
-  if (isEntryListQuery(q)) {
-    return `${q} entry list drivers teams cars lineup`;
-  }
-
-  return q;
+function normalizeDriverGroup(value: string) {
+  return value
+    .split(/\s*(?:\/|,|;|\+| and | & )\s*/i)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .sort((a, b) => cleanText(a).localeCompare(cleanText(b)))
+    .join(' / ');
 }
 
-function sanitizeImportPayload(input: any, query = ''): ImportPayloadType {
-  const wantsStandings = isStandingsQuery(query);
-  const wantsCalendar = isCalendarQuery(query);
-  const wantsEntryList = isEntryListQuery(query) && !wantsStandings;
+function isRetryableGeminiError(error: unknown) {
+  const message = getErrorMessage(error);
 
-  const events = Array.isArray(input?.events)
-    ? input.events
-        .filter((event: any) => {
-          return (
-            event &&
-            typeof event.title === 'string' &&
-            typeof event.series === 'string' &&
-            typeof event.category === 'string' &&
-            typeof event.circuit === 'string' &&
-            typeof event.startsAt === 'string'
-          );
-        })
-        .map((event: any) => ({
-          title: String(event.title).trim(),
-          series: String(event.series).trim(),
-          category: String(event.category).trim(),
-          circuit: String(event.circuit).trim(),
-          country: event.country ? String(event.country).trim() : null,
-          startsAt: String(event.startsAt).trim(),
-          endsAt: event.endsAt ? String(event.endsAt).trim() : null,
-          priority: normalizePriority(event.priority),
-          hasBrazilian: Boolean(event.hasBrazilian),
-          hasVerstappen: Boolean(event.hasVerstappen),
-          sourceUrl: event.sourceUrl ? String(event.sourceUrl).trim() : null,
-          notes: event.notes ? String(event.notes).trim() : null,
-        }))
-    : [];
-
-  const standings = Array.isArray(input?.standings)
-    ? input.standings
-        .filter((standing: any) => {
-          if (
-            !standing ||
-            standing.driver === null ||
-            standing.driver === undefined ||
-            String(standing.driver).trim() === '' ||
-            standing.series === null ||
-            standing.series === undefined ||
-            String(standing.series).trim() === '' ||
-            standing.category === null ||
-            standing.category === undefined ||
-            String(standing.category).trim() === ''
-          ) {
-            return false;
-          }
-
-          if (looksLikeTeamOnlyStanding(standing)) {
-            return false;
-          }
-
-          // Se a consulta for calendário puro, não salva standings perdidos.
-          if (wantsCalendar && !wantsStandings && !wantsEntryList) {
-            return false;
-          }
-
-          // Se pediu classificação/pontos, não deixa Entry List misturar.
-          if (wantsStandings && isEntryListCategory(standing.category)) {
-            return false;
-          }
-
-          // Se pediu classificação/pontos, bloqueia categorias de equipes/construtores.
-          if (wantsStandings && isTeamOnlyCategory(standing.category)) {
-            return false;
-          }
-
-          // Se pediu classificação/pontos, aceita apenas categoria relacionada a pilotos/resultados/classes.
-          if (wantsStandings && !isDriverRelatedCategory(standing.category)) {
-            return false;
-          }
-
-          // Se não pediu Entry List, evita salvar Entry List por acidente.
-          if (!wantsEntryList && isEntryListCategory(standing.category)) {
-            return false;
-          }
-
-          return true;
-        })
-        .map((standing: any, index: number) => ({
-          series: String(standing.series).trim(),
-          category: String(standing.category).trim(),
-          position: parsePositivePosition(standing.position, index + 1),
-          driver: String(standing.driver).trim(),
-          team: standing.team ? String(standing.team).trim() : null,
-          car: standing.car ? String(standing.car).trim() : null,
-          points: parseNullableNumber(standing.points),
-          gap: standing.gap ? String(standing.gap).trim() : null,
-          sourceUrl: standing.sourceUrl ? String(standing.sourceUrl).trim() : null,
-        }))
-    : [];
-
-  return {
-    summary: input?.summary ? String(input.summary).trim() : '',
-    events,
-    standings,
-  };
+  return (
+    message.includes('503') ||
+    message.includes('UNAVAILABLE') ||
+    message.includes('high demand') ||
+    message.includes('temporarily unavailable') ||
+    message.includes('429') ||
+    message.toLowerCase().includes('rate limit')
+  );
 }
 
-async function searchTavily(query: string) {
+async function generateGeminiWithRetry(ai: GoogleGenAI, args: Record<string, unknown>) {
+  const maxAttempts = Number(process.env.GEMINI_RETRY_ATTEMPTS || '4');
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await (ai.models.generateContent as any)(args);
+    } catch (error) {
+      lastError = error;
+
+      if (!isRetryableGeminiError(error) || attempt === maxAttempts) {
+        throw error;
+      }
+
+      await sleep(1500 * attempt);
+    }
+  }
+
+  throw lastError;
+}
+
+function buildImportTasks(query: string) {
+  const year = process.env.IMPORT_YEAR || String(new Date().getUTCFullYear());
+  const base = query.trim();
+  const tasks = [
+    `Official ${year} GT World Challenge Europe Endurance Cup and Sprint Cup GT3 race calendar, main race dates only, official entry lists, drivers, teams, car numbers and car models. Exclude prologue, tests, trials and esports. ${base}`,
+    `Official ${year} FIA WEC calendar and LMGT3 entry list with events, race dates, circuits, drivers, teams, car numbers and car models. Exclude tests, prologue and esports. ${base}`,
+    `Official ${year} IMSA WeatherTech SportsCar Championship GTD and GTD Pro calendar and entry lists with Daytona Sebring Watkins Glen Petit Le Mans drivers teams cars. Exclude tests and esports. ${base}`,
+    `Official ${year} European Le Mans Series, Asian Le Mans Series and Le Mans Cup GT or LMGT3 calendar and entry lists with drivers teams cars. Exclude tests and esports. ${base}`,
+    `Official ${year} Intercontinental GT Challenge, Bathurst 12 Hour, Spa 24 Hours, Nürburgring 24 Hours, Dubai 24H and Suzuka GT3 dates and entry lists. Main race dates only. Exclude virtual and test events. ${base}`,
+    `Official ${year} Nürburgring Langstrecken-Serie NLS, Nürburgring 24h SP9 GT3, 24H Series GT3 race calendar and entry lists with drivers teams cars. Exclude tests and esports. ${base}`,
+    `Official ${year} British GT, DTM GT3, International GT Open and Super Taikyu GT3 calendar and entry lists with drivers teams cars. Exclude tests and esports. ${base}`,
+  ];
+
+  const maxTasks = Math.max(1, Number(process.env.IMPORT_MAX_TASKS || '7'));
+  return tasks.slice(0, maxTasks);
+}
+
+async function searchTavily(query: string): Promise<SearchEvidence> {
   if (!process.env.TAVILY_API_KEY) {
-    throw new Error('TAVILY_API_KEY vazia. Configure a chave antes de executar importação real.');
+    throw new Error('TAVILY_API_KEY vazia. Configure a chave ou use IMPORT_SEARCH_PROVIDER=gemini.');
   }
 
   const response = await fetch('https://api.tavily.com/search', {
@@ -416,14 +474,13 @@ async function searchTavily(query: string) {
       api_key: process.env.TAVILY_API_KEY,
       query,
       search_depth: process.env.TAVILY_SEARCH_DEPTH || 'advanced',
-      max_results: Number(process.env.TAVILY_MAX_RESULTS || '10'),
+      max_results: Number(process.env.TAVILY_MAX_RESULTS || '20'),
       include_answer: true,
       include_raw_content: true,
     }),
   });
 
   const text = await response.text();
-
   let json: unknown;
 
   try {
@@ -437,170 +494,349 @@ async function searchTavily(query: string) {
   }
 
   return {
+    task: query,
+    provider: 'tavily',
+    query,
+    rawText: JSON.stringify(json).slice(0, 24000),
+    rawJson: json,
     status: response.status,
-    json,
-    rawText: text,
   };
 }
 
-async function normalizeWithGemini(raw: unknown, query: string) {
+async function searchGeminiGrounded(query: string): Promise<SearchEvidence> {
   if (!process.env.GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY vazia. Configure a chave antes de executar importação real.');
   }
 
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-
-  const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
-  });
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const model = process.env.GEMINI_SEARCH_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
   const prompt = `
-Você é um normalizador de dados reais de automobilismo.
+Search the web with grounding and collect factual motorsport data.
+Return a compact but detailed evidence report, not final JSON.
 
-Objetivo:
-Transformar resultados de busca web sobre calendários, entry lists, lineups, pilotos, equipes, modelos de carros, classificações, standings, championship standings, points tables, race results e session results em JSON válido.
+Rules:
+- Prioritize official championship/event pages.
+- Current/future year only: ${process.env.IMPORT_YEAR || new Date().getUTCFullYear()} and later.
+- Main race calendar dates only for events.
+- Do not use test, prologue, trial, practice, media day or pre-event dates as race dates.
+- Separate real racing from esports/virtual racing.
+- For entry lists, include driver lineup, team, car number, car model, class, event/series and source URL.
+- If the source contains Spa 24h test days and the actual Spa 24h race, clearly distinguish them.
 
-Contexto do sistema:
-- O sistema acompanha PILOTOS, DUPLAS ou TRIOS.
-- O sistema NÃO acompanha equipes, construtores ou fabricantes isolados neste momento.
-- Portanto, nunca retorne linhas em que o "driver" seja apenas uma equipe, construtor ou fabricante.
-
-Regras obrigatórias:
-- Retorne SOMENTE JSON válido.
-- Não use markdown.
-- Não invente eventos, pilotos, equipes, carros, pontos, gaps ou datas.
-- Use somente informações indicadas nos dados brutos.
-- sourceUrl deve vir da URL da fonte quando disponível.
-- Não traduza nomes oficiais de séries, equipes, pilotos, circuitos ou classes.
-- Se não houver dados confiáveis, retorne arrays vazios.
-
-Regras para EVENTS:
-- Use events SOMENTE para calendário, schedule, dates, races, tracks ou calendário de corridas.
-- Se não tiver certeza da hora do evento, use 12:00:00.000Z.
-- Se não tiver data final, use null em endsAt.
-- Não coloque corridas dentro de standings.
-
-Regras para STANDINGS:
-- Use standings para classificações de pilotos, championship standings de pilotos, race results, quali/session results e entry lists válidas.
-- driver deve ser o piloto, dupla ou trio.
-- team deve ser a equipe.
-- car deve ser o modelo do carro quando a fonte informar.
-- Se encontrar piloto/equipe mas não encontrar carro, use car: null.
-- Não retorne standings com driver null.
-- Não retorne standings onde driver seja Mercedes, Ferrari, McLaren, Red Bull, Alpine, Haas, Williams, Audi, Cadillac, Aston Martin ou qualquer equipe/construtor/fabricante sozinho.
-- position deve ser numérico e representar a posição encontrada.
-- points deve ser numérico quando houver PTS, Total, Points, Pontos ou pontuação equivalente.
-- gap deve ser preenchido somente se a fonte trouxer gap, interval, behind ou diferença para o líder.
-- Não preencha gap em standings de campeonato, salvo se a fonte trouxer gap explicitamente.
-
-Regras para bloquear equipes/construtores:
-- Nunca retorne Constructors Championship.
-- Nunca retorne Teams Championship.
-- Nunca retorne Manufacturers Championship.
-- Nunca retorne Constructors Standings.
-- Nunca retorne Teams Standings.
-- Nunca retorne Manufacturers Standings.
-- Se a tabela tiver apenas equipes/construtores/fabricantes, ignore.
-- Para Formula 1, quando a consulta pedir standings, championship, classification, points, pts ou ranking, retorne SOMENTE Drivers Championship.
-
-Regras para ENTRY LIST:
-- Use entry list, lineup, teams list ou inscritos dentro de standings SOMENTE quando a consulta pedir entry list, lineup, teams, drivers ou cars E NÃO pedir standings, championship, classification, points, pts, gap ou ranking.
-- Em entry list, use category: "Entry List".
-- Em entry list, points e gap devem ser null.
-- Em entry list, position pode ser a ordem encontrada na fonte quando não houver classificação real.
-- Não misture Entry List com Drivers Championship na mesma resposta quando a consulta pedir standings, pontos, classification, championship ou ranking.
-
-Regras para CLASSIFICAÇÕES COM PONTOS:
-- Se a consulta pedir "standings", "classification", "championship", "points", "pts", "gap" ou "ranking":
-  - Extraia SOMENTE tabelas de classificação/campeonato/resultado relacionadas a pilotos.
-  - Não retorne Entry List, line-up, grid, teams/drivers list ou lista de inscritos.
-  - Não retorne Constructors Championship, Teams Championship ou Manufacturers Championship.
-  - A categoria deve ser "Drivers Championship", "Overall Standings", "Race Result", "Qualifying Result" ou equivalente relacionado a pilotos/classes.
-  - Cada item em standings deve ter points numérico quando a fonte tiver coluna "Points", "Pts", "Total" ou equivalente.
-  - Se encontrar uma tabela com coluna "Pos.", "Driver" e "Points", use o último valor numérico da linha como points.
-  - Ignore tabelas de "Entries", "Teams and drivers", "Race drivers", "Line-up", "Constructors", "Teams" ou "Manufacturers".
-  - Quando houver tanto "Entry List" quanto "World Drivers' Championship standings" nos dados brutos, priorize "World Drivers' Championship standings".
-
-Regras para categorias/classes:
-- Use category como a classe oficial quando existir: Pro, Pro-Am, Gold, Silver, Bronze, Overall, GT3, LMGT3, GTD, GTD Pro, SP9, Drivers Championship, Overall Standings, Race Result, Qualifying Result ou Entry List.
-- Gold, Silver e Bronze podem ser categorias válidas em GT3/GTWC/SRO quando a fonte indicar classe de piloto/equipe.
-- Não use Gold/Silver/Bronze apenas por legenda de cor de resultado. Se vier da legenda "Gold = Winner", "Silver = Second place", "Bronze = Third place", ignore como categoria.
-
-Consulta usada:
+Query:
 ${query}
+`;
 
-Formato obrigatório:
+  const response = await generateGeminiWithRetry(ai, {
+    model,
+    contents: prompt,
+    config: {
+      tools: [{ googleSearch: {} }],
+    },
+  });
+
+  const rawText = String((response as any).text || '').trim();
+  const metadata = (response as any).candidates?.[0]?.groundingMetadata || null;
+
+  return {
+    task: query,
+    provider: `gemini-grounded:${model}`,
+    query,
+    rawText: JSON.stringify({ text: rawText, groundingMetadata: metadata }).slice(0, 30000),
+  };
+}
+
+async function collectEvidence(query: string, force = false) {
+  const provider = process.env.IMPORT_SEARCH_PROVIDER || 'gemini';
+  const tasks = buildImportTasks(query);
+  const ttl = Number(process.env.IMPORT_CACHE_TTL_SECONDS || '86400');
+  const cacheClient = await cache();
+  const evidences: SearchEvidence[] = [];
+  const failures: Array<{ task: string; error: string }> = [];
+
+  for (const task of tasks) {
+    const cacheKey = `import:evidence:${provider}:${stableKey([task])}`;
+    const cached = !force ? await cacheClient.get<SearchEvidence>(cacheKey) : null;
+
+    if (cached) {
+      evidences.push(cached);
+      continue;
+    }
+
+    try {
+      let evidence: SearchEvidence;
+
+      if (provider === 'tavily') {
+        evidence = await searchTavily(task);
+      } else if (provider === 'hybrid') {
+        try {
+          evidence = await searchGeminiGrounded(task);
+        } catch (error) {
+          failures.push({ task, error: `Gemini grounded falhou; tentando Tavily: ${getErrorMessage(error)}` });
+          evidence = await searchTavily(task);
+        }
+      } else {
+        evidence = await searchGeminiGrounded(task);
+      }
+
+      evidences.push(evidence);
+      await cacheClient.set(cacheKey, evidence, ttl);
+    } catch (error) {
+      failures.push({ task, error: getErrorMessage(error) });
+    }
+  }
+
+  if (evidences.length === 0) {
+    throw new Error(`Nenhuma evidência coletada. Falhas: ${JSON.stringify(failures).slice(0, 1800)}`);
+  }
+
+  return { evidences, failures, tasks };
+}
+
+function sanitizeImportPayload(input: any): ImportPayloadType {
+  const minDate = getMinImportDate();
+
+  const events = Array.isArray(input?.events)
+    ? input.events
+        .filter((event: any) => {
+          if (!event?.title || !event?.series || !event?.category || !event?.circuit || !event?.startsAt) return false;
+
+          const startsAt = safeDate(event.startsAt);
+          if (!startsAt || startsAt < minDate) return false;
+
+          const eventKind = event.eventKind || detectEventKind(`${event.title} ${event.series} ${event.category}`, event.sourceUrl);
+          if (eventKind === 'REAL' && hasBlacklistedSessionName(`${event.title} ${event.category} ${event.notes || ''}`)) return false;
+
+          return true;
+        })
+        .map((event: any) => {
+          const eventKind = event.eventKind || detectEventKind(`${event.title} ${event.series} ${event.category}`, event.sourceUrl);
+          return {
+            title: String(event.title).trim(),
+            series: String(event.series).trim(),
+            category: canonicalCategory(String(event.category || ''), String(event.series || '')),
+            eventKind: eventKind === 'ESPORT' ? 'ESPORT' : 'REAL',
+            circuit: String(event.circuit).trim(),
+            country: event.country ? String(event.country).trim() : null,
+            startsAt: String(event.startsAt).trim(),
+            endsAt: event.endsAt ? String(event.endsAt).trim() : null,
+            priority: normalizePriority(event.priority),
+            hasBrazilian: Boolean(event.hasBrazilian),
+            hasVerstappen: Boolean(event.hasVerstappen),
+            sourceUrl: event.sourceUrl ? String(event.sourceUrl).trim() : null,
+            notes: event.notes ? String(event.notes).trim() : null,
+          } satisfies EventInputType;
+        })
+    : [];
+
+  const standings = Array.isArray(input?.standings)
+    ? input.standings
+        .filter((standing: any) => {
+          if (!standing?.driver || !standing?.series || !standing?.category) return false;
+          const category = cleanText(standing.category);
+          if (/constructor|manufacturer|team standings|teams championship|fabricante|construtor/.test(category)) return false;
+
+          return true;
+        })
+        .map((standing: any, index: number) => {
+          const kind = standing.kind === 'STANDINGS' ? 'STANDINGS' : 'ENTRY_LIST';
+          const eventKind = standing.eventKind || detectEventKind(`${standing.eventTitle || ''} ${standing.series} ${standing.category}`, standing.sourceUrl);
+          return {
+            eventTitle: standing.eventTitle ? String(standing.eventTitle).trim() : null,
+            eventCircuit: standing.eventCircuit ? String(standing.eventCircuit).trim() : null,
+            eventDate: standing.eventDate ? String(standing.eventDate).trim() : null,
+            series: String(standing.series).trim(),
+            category: canonicalCategory(String(standing.category || ''), String(standing.series || '')),
+            kind,
+            eventKind: eventKind === 'ESPORT' ? 'ESPORT' : 'REAL',
+            position: parsePositivePosition(standing.position, index + 1),
+            carNumber: standing.carNumber ? String(standing.carNumber).replace(/^#/, '').trim() : null,
+            driver: normalizeDriverGroup(String(standing.driver).trim()),
+            team: standing.team ? String(standing.team).trim() : null,
+            car: standing.car ? String(standing.car).trim() : null,
+            points: null,
+            gap: null,
+            sourceUrl: standing.sourceUrl ? String(standing.sourceUrl).trim() : null,
+          } satisfies StandingInputType;
+        })
+    : [];
+
+  return {
+    summary: input?.summary ? String(input.summary).trim() : '',
+    events,
+    standings,
+  };
+}
+
+async function normalizeEvidenceWithGemini(evidences: SearchEvidence[], query: string) {
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY vazia. Configure a chave antes de executar importação real.');
+  }
+
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const model = process.env.GEMINI_NORMALIZER_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const minDate = getMinImportDate().toISOString().slice(0, 10);
+
+  const evidenceText = evidences
+    .map((evidence, index) => `### Evidence ${index + 1}\nProvider: ${evidence.provider}\nTask: ${evidence.task}\n${evidence.rawText}`)
+    .join('\n\n')
+    .slice(0, Number(process.env.IMPORT_EVIDENCE_MAX_CHARS || '90000'));
+
+  const prompt = `
+You normalize grounded motorsport evidence into strict JSON for a production website.
+
+Core goal:
+Extract the maximum reliable GT3/endurance data, but never invent facts.
+
+Current minimum date:
+${minDate}
+Ignore events before this date.
+
+Hard rules:
+- Return only valid JSON. No markdown.
+- Use evidence only. Do not invent event dates, drivers, teams, cars or URLs.
+- Prefer official source URLs when available.
+- Events must be main race events. Never use trial, test day, testing, prologue, practice, media day, qualifying, warm-up or pre-event dates as race dates.
+- If a page contains both test/prologue dates and the real race date, return only the real race event date.
+- Separate esports/virtual events using eventKind: "ESPORT". Real racing must use eventKind: "REAL".
+- For standings for now, ignore championship points and gaps. Set points:null and gap:null.
+- Use standings mainly as ENTRY_LIST for drivers/teams/cars.
+- carNumber is the car number, not position.
+- position is only display order for ENTRY_LIST if no real result is present.
+- Do not return Formula 1 drivers unless the evidence clearly says they are in GT3/endurance entry list.
+- Do not mix Stock Car, F1, NASCAR or unrelated categories.
+- Normalize categories: GT3, GT3 Endurance, GT3 Sprint, LMGT3, GTD, GTD Pro, SP9 GT3, Endurance.
+- For Spa 24 Hours, the real event is not Spa test days, not prologue and not a trial.
+
+Required JSON shape:
 {
   "summary": "string",
   "events": [
     {
-      "title": "string",
-      "series": "string",
-      "category": "string",
-      "circuit": "string",
-      "country": "string ou null",
-      "startsAt": "YYYY-MM-DDTHH:mm:ss.000Z",
-      "endsAt": "YYYY-MM-DDTHH:mm:ss.000Z ou null",
+      "title": "official event name",
+      "series": "official series name",
+      "category": "GT3 | GT3 Endurance | GT3 Sprint | LMGT3 | GTD | GTD Pro | SP9 GT3 | Endurance",
+      "eventKind": "REAL or ESPORT",
+      "circuit": "official circuit name",
+      "country": "country or null",
+      "startsAt": "YYYY-MM-DDT12:00:00.000Z",
+      "endsAt": "YYYY-MM-DDT12:00:00.000Z or null",
       "priority": 1,
       "hasBrazilian": false,
       "hasVerstappen": false,
-      "sourceUrl": "string ou null",
-      "notes": "string ou null"
+      "sourceUrl": "official/source URL or null",
+      "notes": "short evidence-based note or null"
     }
   ],
   "standings": [
     {
-      "series": "string",
-      "category": "string",
+      "eventTitle": "related event title or null",
+      "eventCircuit": "related circuit or null",
+      "eventDate": "YYYY-MM-DD or null",
+      "series": "series",
+      "category": "class/category",
+      "kind": "ENTRY_LIST",
+      "eventKind": "REAL or ESPORT",
       "position": 1,
-      "driver": "string",
-      "team": "string ou null",
-      "car": "string ou null",
-      "points": 0,
-      "gap": "string ou null",
-      "sourceUrl": "string ou null"
+      "carNumber": "number without # or null",
+      "driver": "driver, duo or trio names separated by /",
+      "team": "team or null",
+      "car": "car model or null",
+      "points": null,
+      "gap": null,
+      "sourceUrl": "source URL or null"
     }
   ]
 }
 
-Dados brutos:
-${JSON.stringify(raw).slice(0, 32000)}
+User query:
+${query}
+
+Evidence:
+${evidenceText}
 `;
 
-  const response = await ai.models.generateContent({
+  const response = await generateGeminiWithRetry(ai, {
     model,
     contents: prompt,
     config: {
       responseMimeType: 'application/json',
+      temperature: 0,
     },
   });
 
-  const rawText = response.text || '';
-  const json = parseJsonFromText(rawText);
-  const sanitized = sanitizeImportPayload(json, query);
+  const rawText = String((response as any).text || '');
+  const parsedJsonResult = await parseJsonFromTextWithRepair(rawText, ai, model);
+  const sanitized = sanitizeImportPayload(parsedJsonResult.json);
   const parsed = ImportPayload.parse(sanitized);
 
-  const wantsStandings = isStandingsQuery(query);
-
-  if (
-    wantsStandings &&
-    parsed.standings.length > 0 &&
-    parsed.standings.every((standing) => standing.points === null || standing.points === undefined)
-  ) {
-    throw new Error(
-      'A consulta pediu classificação/pontos, mas o Gemini retornou standings sem pontuação. Provavelmente normalizou Entry List em vez de Championship Standings.',
-    );
-  }
-
   if (!(parsed.events.length > 0) && !(parsed.standings.length > 0)) {
-    throw new Error('Gemini não retornou nenhum evento real validável. Nada foi salvo.');
+    throw new Error('Gemini não retornou eventos ou entry lists validáveis com as evidências coletadas. Nada foi salvo.');
   }
 
   return {
     json: parsed,
-    rawText,
+    rawText: parsedJsonResult.repaired
+      ? `${rawText}\n\n--- JSON REPAIRED BY GEMINI ---\n${parsedJsonResult.repairedText}`
+      : rawText,
     model,
   };
+}
+
+function eventSourceKey(event: EventInputType) {
+  const startsAt = safeDate(event.startsAt);
+  const year = startsAt?.getUTCFullYear() || process.env.IMPORT_YEAR || new Date().getUTCFullYear();
+  return stableKey([
+    'event',
+    event.eventKind,
+    year,
+    canonicalEventTitle(event.title),
+    canonicalCircuit(event.circuit),
+  ]);
+}
+
+async function findRelatedEvent(standing: StandingInputType) {
+  if (!standing.eventTitle && !standing.eventCircuit && !standing.eventDate) return null;
+
+  const eventDate = safeDate(standing.eventDate || undefined);
+  const year = eventDate?.getUTCFullYear() || process.env.IMPORT_YEAR || new Date().getUTCFullYear();
+  const sourceKey = stableKey([
+    'event',
+    standing.eventKind,
+    year,
+    canonicalEventTitle(standing.eventTitle || ''),
+    canonicalCircuit(standing.eventCircuit || ''),
+  ]);
+
+  const direct = await prisma.event.findUnique({ where: { sourceKey } });
+  if (direct) return direct;
+
+  if (standing.eventTitle) {
+    const canonicalTitle = canonicalEventTitle(standing.eventTitle);
+    const candidates = await prisma.event.findMany({
+      where: {
+        eventKind: standing.eventKind as any,
+        startsAt: eventDate
+          ? {
+              gte: new Date(Date.UTC(year as number, 0, 1)),
+              lt: new Date(Date.UTC((year as number) + 1, 0, 1)),
+            }
+          : undefined,
+      },
+      take: 100,
+    });
+
+    return candidates.find((event) => canonicalEventTitle(event.title) === canonicalTitle) || null;
+  }
+
+  return null;
+}
+
+function shouldUpdateEvent(existing: any, incoming: EventInputType) {
+  const existingScore = sourceScore(existing.sourceUrl) + (existing.circuit ? 5 : 0) + (existing.country ? 2 : 0);
+  const incomingScore = sourceScore(incoming.sourceUrl) + (incoming.circuit ? 5 : 0) + (incoming.country ? 2 : 0);
+  return incomingScore >= existingScore;
 }
 
 async function persistPayload(payloadUnknown: unknown, provider: string) {
@@ -613,91 +849,97 @@ async function persistPayload(payloadUnknown: unknown, provider: string) {
 
   for (const event of payload.events) {
     const startsAt = safeDate(event.startsAt);
+    if (!startsAt || startsAt < getMinImportDate()) continue;
+    if (event.eventKind === 'REAL' && hasBlacklistedSessionName(`${event.title} ${event.category} ${event.notes || ''}`)) continue;
 
-    if (!startsAt) {
-      continue;
-    }
-
-    const sourceKey = stableKey(['event', event.series, event.title, event.circuit, startsAt.toISOString()]);
+    const sourceKey = eventSourceKey(event);
     const existing = await prisma.event.findUnique({ where: { sourceKey } });
+    const data = {
+      sourceKey,
+      title: event.title,
+      series: event.series,
+      category: event.category,
+      eventKind: event.eventKind as any,
+      circuit: event.circuit,
+      country: event.country || null,
+      startsAt,
+      endsAt: safeDate(event.endsAt),
+      priority: event.priority,
+      hasBrazilian: event.hasBrazilian,
+      hasVerstappen: event.hasVerstappen,
+      sourceUrl: event.sourceUrl || provider,
+      notes: event.notes || payload.summary || null,
+    };
 
-    await prisma.event.upsert({
-      where: { sourceKey },
-      create: {
-        sourceKey,
-        title: event.title,
-        series: event.series,
-        category: event.category,
-        circuit: event.circuit,
-        country: event.country || null,
-        startsAt,
-        endsAt: safeDate(event.endsAt),
-        priority: event.priority,
-        hasBrazilian: event.hasBrazilian,
-        hasVerstappen: event.hasVerstappen,
-        sourceUrl: event.sourceUrl || provider,
-        notes: event.notes || payload.summary || null,
-      },
-      update: {
-        title: event.title,
-        series: event.series,
-        category: event.category,
-        circuit: event.circuit,
-        country: event.country || null,
-        startsAt,
-        endsAt: safeDate(event.endsAt),
-        priority: event.priority,
-        hasBrazilian: event.hasBrazilian,
-        hasVerstappen: event.hasVerstappen,
-        sourceUrl: event.sourceUrl || provider,
-        notes: event.notes || payload.summary || null,
-      },
-    });
-
-    if (existing) eventsUpdated++;
-    else eventsCreated++;
+    if (!existing) {
+      await prisma.event.create({ data });
+      eventsCreated++;
+    } else if (shouldUpdateEvent(existing, event)) {
+      await prisma.event.update({ where: { sourceKey }, data });
+      eventsUpdated++;
+    } else {
+      await prisma.event.update({
+        where: { sourceKey },
+        data: {
+          hasBrazilian: existing.hasBrazilian || event.hasBrazilian,
+          hasVerstappen: existing.hasVerstappen || event.hasVerstappen,
+          notes: existing.notes || event.notes || payload.summary || null,
+          sourceUrl: existing.sourceUrl || event.sourceUrl || provider,
+        },
+      });
+      eventsUpdated++;
+    }
   }
 
   for (const standing of payload.standings) {
+    const relatedEvent = await findRelatedEvent(standing);
+    const driverKey = normalizeDriverGroup(standing.driver);
     const sourceKey = stableKey([
       'standing',
+      standing.kind,
+      standing.eventKind,
       standing.series,
       standing.category,
-      standing.driver,
+      standing.eventTitle ? canonicalEventTitle(standing.eventTitle) : '',
+      driverKey,
       standing.team,
     ]);
 
     const existing = await prisma.standing.findUnique({ where: { sourceKey } });
+    const data = {
+      sourceKey,
+      eventId: relatedEvent?.id || null,
+      kind: standing.kind as any,
+      eventKind: standing.eventKind as any,
+      series: standing.series,
+      category: standing.category,
+      position: standing.position,
+      carNumber: standing.carNumber || null,
+      driver: driverKey,
+      team: standing.team || null,
+      car: standing.car || null,
+      points: null,
+      gap: null,
+      sourceUrl: standing.sourceUrl || provider,
+    };
 
-    await prisma.standing.upsert({
-      where: { sourceKey },
-      create: {
-        sourceKey,
-        series: standing.series,
-        category: standing.category,
-        position: standing.position,
-        driver: standing.driver,
-        team: standing.team || null,
-        car: standing.car || null,
-        points: standing.points ?? null,
-        gap: standing.gap || null,
-        sourceUrl: standing.sourceUrl || provider,
-      },
-      update: {
-        series: standing.series,
-        category: standing.category,
-        position: standing.position,
-        driver: standing.driver,
-        team: standing.team || null,
-        car: standing.car || null,
-        points: standing.points ?? null,
-        gap: standing.gap || null,
-        sourceUrl: standing.sourceUrl || provider,
-      },
-    });
-
-    if (existing) standingsUpdated++;
-    else standingsCreated++;
+    if (!existing) {
+      await prisma.standing.create({ data });
+      standingsCreated++;
+    } else {
+      await prisma.standing.update({
+        where: { sourceKey },
+        data: {
+          ...data,
+          carNumber: existing.carNumber || data.carNumber,
+          car: existing.car || data.car,
+          team: existing.team || data.team,
+          eventId: existing.eventId || data.eventId,
+          sourceUrl: existing.sourceUrl || data.sourceUrl,
+        },
+      });
+      standingsUpdated++;
+    }
   }
 
   return {
@@ -719,10 +961,9 @@ export async function runImport(
   const query =
     options?.query ||
     process.env.IMPORT_QUERY ||
-    '2026 endurance racing GT3 calendar Nürburgring 24 Spa 24 GT World Challenge Europe WEC IMSA Intercontinental GT Challenge dates';
+    '2026 GT3 and endurance real racing calendar and official entry lists drivers teams cars';
 
-  const searchQuery = buildSearchQuery(query);
-  const provider = 'tavily+gemini';
+  const provider = process.env.IMPORT_SEARCH_PROVIDER || 'gemini';
 
   const log = await prisma.importLog.create({
     data: {
@@ -735,66 +976,28 @@ export async function runImport(
 
   const diagnostics: Record<string, unknown> = {
     query,
-    searchQuery,
     provider,
     stages: [],
-    strictRealData: true,
-    tracksDriversOnly: true,
-    blocksTeamOnlyStandings: true,
+    minDate: getMinImportDate().toISOString(),
+    maxTasks: process.env.IMPORT_MAX_TASKS || '7',
+    pointsAndGapDisabled: true,
+    searchArchitecture: 'grounded-search -> normalizer -> local-validator -> smart-merge',
   };
 
-  const ttl = Number(process.env.IMPORT_CACHE_TTL_SECONDS || '86400');
-  const cacheClient = await cache();
-  const cacheKey = `import:${searchQuery}`;
-
   try {
-    let searchJson: unknown = null;
-    let tavilyStatus: number | undefined;
+    (diagnostics.stages as string[]).push('collect_evidence');
+    const collected = await collectEvidence(query, Boolean(options?.force));
+    diagnostics.tasks = collected.tasks;
+    diagnostics.evidenceCount = collected.evidences.length;
+    diagnostics.evidenceFailures = collected.failures;
 
-    try {
-      (diagnostics.stages as string[]).push('cache_check');
-
-      const cached = !options?.force ? await cacheClient.get<unknown>(cacheKey) : null;
-
-      if (cached) {
-        searchJson = cached;
-        (diagnostics.stages as string[]).push('cache_hit');
-      } else {
-        (diagnostics.stages as string[]).push('tavily_search');
-
-        const result = await searchTavily(searchQuery);
-
-        searchJson = result.json;
-        tavilyStatus = result.status;
-
-        await cacheClient.set(cacheKey, searchJson, ttl);
-      }
-    } catch (error) {
-      diagnostics.searchError = getErrorMessage(error);
-      throw new Error(`Falha na busca Tavily: ${diagnostics.searchError}`);
-    }
-
-    let normalized: ImportPayloadType;
-    let llmRawText = '';
-    let llmModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-
-    try {
-      (diagnostics.stages as string[]).push('gemini_normalize');
-
-      const result = await normalizeWithGemini(searchJson, query);
-
-      normalized = result.json;
-      llmRawText = result.rawText;
-      llmModel = result.model;
-    } catch (error) {
-      diagnostics.llmError = getErrorMessage(error);
-      diagnostics.llmErrorDetail = getErrorDetail(error);
-      throw new Error(`Falha na normalização Gemini: ${diagnostics.llmError}`);
-    }
+    (diagnostics.stages as string[]).push('gemini_normalize');
+    const normalized = await normalizeEvidenceWithGemini(collected.evidences, query);
+    diagnostics.normalizedEvents = normalized.json.events.length;
+    diagnostics.normalizedEntries = normalized.json.standings.length;
 
     (diagnostics.stages as string[]).push(options?.dryRun ? 'dry_run_validate' : 'persist');
-
-    const parsed = ImportPayload.parse(normalized);
+    const parsed = ImportPayload.parse(normalized.json);
 
     let eventsCreated = 0;
     let eventsUpdated = 0;
@@ -803,7 +1006,6 @@ export async function runImport(
 
     if (!options?.dryRun) {
       const persisted = await persistPayload(parsed, provider);
-
       eventsCreated = persisted.eventsCreated;
       eventsUpdated = persisted.eventsUpdated;
       standingsCreated = persisted.standingsCreated;
@@ -811,20 +1013,17 @@ export async function runImport(
     }
 
     const message = options?.dryRun
-      ? 'Importação real validada em modo dry-run. Nada foi salvo.'
-      : 'Importação real concluída com Tavily + Gemini.';
+      ? 'Importação validada em dry-run. Nada foi salvo.'
+      : `Importação concluída com ${provider}. Eventos e entry lists normalizados.`;
 
     await prisma.importLog.update({
-      where: {
-        id: log.id,
-      },
+      where: { id: log.id },
       data: {
         status: 'SUCCESS',
         message,
-        tavilyStatus,
-        llmModel,
-        rawSearchJson: searchJson as any,
-        llmRawText,
+        llmModel: normalized.model,
+        rawSearchJson: collected as any,
+        llmRawText: normalized.rawText,
         parsedJson: parsed as any,
         eventsCreated,
         eventsUpdated,
@@ -849,9 +1048,7 @@ export async function runImport(
     const detail = getErrorDetail(error);
 
     await prisma.importLog.update({
-      where: {
-        id: log.id,
-      },
+      where: { id: log.id },
       data: {
         status: 'FAILED',
         message: getErrorMessage(error),
@@ -870,10 +1067,7 @@ export async function runImport(
       eventsUpdated: 0,
       standingsCreated: 0,
       standingsUpdated: 0,
-      diagnostics: {
-        ...diagnostics,
-        errorDetail: detail,
-      },
+      diagnostics: { ...diagnostics, errorDetail: detail },
     };
   }
 }

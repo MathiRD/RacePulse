@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 export async function GET() {
   const standings = await prisma.standing.findMany({
     orderBy: [{ series: 'asc' }, { category: 'asc' }, { position: 'asc' }],
-    take: 100,
+    take: 500,
   });
   return NextResponse.json({ ok: true, standings });
 }

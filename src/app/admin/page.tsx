@@ -54,7 +54,7 @@ export default async function AdminPage({ searchParams }: { searchParams: { log?
 
         <div className="grid gap-5 md:grid-cols-3">
           <div className="glass rounded-3xl p-6"><p className="text-slate-400">Eventos reais</p><b className="text-4xl">{eventsCount}</b></div>
-          <div className="glass rounded-3xl p-6"><p className="text-slate-400">Classificações reais</p><b className="text-4xl">{standingsCount}</b></div>
+          <div className="glass rounded-3xl p-6"><p className="text-slate-400">Pilotos / Entries</p><b className="text-4xl">{standingsCount}</b></div>
           <div className="glass rounded-3xl p-6"><p className="text-slate-400">Último status</p><b className="text-2xl">{logs[0]?.status || '-'}</b></div>
         </div>
 
@@ -62,11 +62,11 @@ export default async function AdminPage({ searchParams }: { searchParams: { log?
           <form action={importNow} className="glass rounded-[2rem] p-6">
             <h2 className="text-2xl font-bold">Importar dados reais</h2>
             <p className="mt-2 text-sm text-slate-400">
-              Roda Tavily + Gemini. Use dry-run primeiro para validar sem salvar no banco.
+              Roda Gemini Grounded Search como principal e Tavily apenas como fallback opcional. Use dry-run primeiro para validar sem salvar no banco.
             </p>
             <textarea name="query" className="input mt-4 min-h-28 w-full" defaultValue={process.env.IMPORT_QUERY} />
             <div className="mt-4 flex flex-wrap gap-4 text-sm">
-              <label className="flex items-center gap-2"><input type="checkbox" name="force" /> Ignorar cache e consultar Tavily</label>
+              <label className="flex items-center gap-2"><input type="checkbox" name="force" /> Ignorar cache e consultar novamente</label>
               <label className="flex items-center gap-2"><input type="checkbox" name="dryRun" /> Dry-run: validar sem salvar</label>
             </div>
             <button className="btn btn-primary mt-5">Executar importação real</button>
@@ -136,7 +136,7 @@ export default async function AdminPage({ searchParams }: { searchParams: { log?
 
                 {active.rawSearchJson && (
                   <details>
-                    <summary className="cursor-pointer font-bold">Resultado Tavily bruto</summary>
+                    <summary className="cursor-pointer font-bold">Evidências brutas da busca</summary>
                     <pre className="mt-3 max-h-96 overflow-auto rounded-2xl bg-black/30 p-4 text-xs">{JSON.stringify(active.rawSearchJson, null, 2)}</pre>
                   </details>
                 )}

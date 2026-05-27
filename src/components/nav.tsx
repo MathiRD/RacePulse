@@ -9,7 +9,7 @@ const links = [
   { href: '/', label: 'Início' },
   { href: '/calendar', label: 'Calendário' },
   { href: '/next-race', label: 'Próxima corrida' },
-  { href: '/standings', label: 'Classificações' },
+  { href: '/standings', label: 'Pilotos' },
 ];
 
 export function Nav() {

@@ -9,7 +9,7 @@ import Link from 'next/link';
 
 export default async function HomePage() {
   const [events, standings, logs] = await Promise.all([
-    prisma.event.findMany({ orderBy: [{ startsAt: 'asc' }, { priority: 'asc' }], take: 60 }),
+    prisma.event.findMany({ where: { startsAt: { gte: new Date() } }, orderBy: [{ startsAt: 'asc' }, { priority: 'asc' }], take: 60 }),
     prisma.standing.findMany({ orderBy: [{ series: 'asc' }, { category: 'asc' }, { position: 'asc' }], take: 60 }),
     prisma.importLog.findMany({ orderBy: { startedAt: 'desc' }, take: 1 }),
   ]);
@@ -29,11 +29,11 @@ export default async function HomePage() {
               Calendário inteligente para acompanhar endurance.
             </h1>
             <p className="mt-5 max-w-2xl text-lg text-slate-300 light:text-slate-700">
-              Importação real com Tavily + Gemini, cache Redis, persistência PostgreSQL e painel de diagnóstico para validar fonte, JSON e erros.
+              Importação com Gemini Grounded Search + normalizador, cache Redis, persistência PostgreSQL e painel de diagnóstico para validar fonte, JSON e erros.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link href="/calendar" className="btn btn-primary flex items-center gap-2">Ver calendário <ArrowRight size={16} /></Link>
-              <Link href="/standings" className="btn btn-ghost flex items-center gap-2">Classificações</Link>
+              <Link href="/standings" className="btn btn-ghost flex items-center gap-2">Pilotos / Entry Lists</Link>
               <Link href="/admin/login" className="btn btn-ghost flex items-center gap-2"><ShieldCheck size={16} /> Admin</Link>
             </div>
           </div>
@@ -70,7 +70,7 @@ export default async function HomePage() {
 
         <section className="mt-12">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-2xl font-bold">Classificações</h2>
+            <h2 className="text-2xl font-bold">Pilotos / Entry Lists</h2>
             <Link className="text-sm text-emerald-300" href="/standings">ver tudo</Link>
           </div>
           <StandingsTable standings={standings} />
