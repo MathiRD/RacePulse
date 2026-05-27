@@ -135,8 +135,12 @@ function getMinImportDate() {
     if (date) return date;
   }
 
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+  // RacePulse works as an annual/static calendar importer. If IMPORT_MIN_DATE is not set,
+  // use the beginning of IMPORT_YEAR instead of today; otherwise races that already happened
+  // in the target season, like Nürburgring 24h, can be returned by the LLM but filtered out
+  // before persisting.
+  const year = Number(process.env.IMPORT_YEAR || new Date().getUTCFullYear());
+  return new Date(Date.UTC(Number.isFinite(year) ? year : new Date().getUTCFullYear(), 0, 1, 0, 0, 0, 0));
 }
 
 function safeDate(value: string | null | undefined) {
@@ -175,11 +179,31 @@ function slug(value: unknown) {
   return cleanText(value).replace(/\s+/g, '-');
 }
 
+function compactDateKey(value: Date | null) {
+  return value ? value.toISOString().slice(0, 10) : '';
+}
+
+function canonicalSeriesGroup(series: string) {
+  const text = cleanText(series);
+
+  if (/gt world challenge|sro|intercontinental gt challenge|igtc|british gt|gt2 european|gt4 european/.test(text)) return 'sro-gt';
+  if (/fia world endurance|\bwec\b|le mans/.test(text)) return 'fia-wec-le-mans';
+  if (/imsa|weathertech|michelin endurance cup/.test(text)) return 'imsa';
+  if (/european le mans|\belms\b/.test(text)) return 'elms';
+  if (/asian le mans|\balms\b/.test(text)) return 'alms';
+  if (/24h series|creventic/.test(text)) return '24h-series';
+  if (/nls|nurburgring langstrecken|nu?rburgring langstrecken/.test(text)) return 'nls';
+  if (/dtm/.test(text)) return 'dtm';
+  if (/gt open/.test(text)) return 'gt-open';
+
+  return slug(series || 'unknown-series');
+}
+
 function canonicalEventTitle(title: string) {
   const t = cleanText(title);
 
   if (/(spa|francorchamps).*(24|twenty four)|24.*(spa|francorchamps)/.test(t)) return '24-hours-of-spa';
-  if (/(nurburgring|nuerburgring).*(24|twenty four)|24.*(nurburgring|nuerburgring)/.test(t)) return '24-hours-of-nurburgring';
+  if (/(n24|24h rennen|24 h rennen|24h race|24 hour race|24 hours of n|nurburgring|nuerburgring|nordschleife).*(24|twenty four|rennen|race)|24.*(n24|nurburgring|nuerburgring|nordschleife)|\bn24\b/.test(t)) return '24-hours-of-nurburgring';
   if (/(le mans).*(24|twenty four)|24.*le mans/.test(t)) return '24-hours-of-le-mans';
   if (/(daytona).*(24|twenty four)|24.*daytona/.test(t)) return '24-hours-of-daytona';
   if (/(dubai).*(24|twenty four)|24.*dubai/.test(t)) return '24-hours-of-dubai';
@@ -188,21 +212,75 @@ function canonicalEventTitle(title: string) {
   if (/petit.*le.*mans/.test(t)) return 'petit-le-mans';
   if (/watkins.*glen/.test(t)) return '6-hours-of-watkins-glen';
 
-  return slug(title.replace(/entry list|calendar|schedule|round \d+|race week/gi, ''));
+  const hourRace = t.match(/(?:^|\b)(\d{1,2})\s*(?:h|hour|hours|hrs)\b.*(?:of\s+)?([a-z0-9 ]{3,60})/);
+  if (hourRace?.[1] && hourRace?.[2]) {
+    return `${hourRace[1]}-hours-${slug(hourRace[2])}`;
+  }
+
+  return slug(title.replace(/entry list|calendar|schedule|round \d+|race week|official|provisional/gi, '')) || 'unknown-event';
 }
 
 function canonicalCircuit(circuit: string) {
   const c = cleanText(circuit);
 
   if (/spa|francorchamps/.test(c)) return 'circuit-de-spa-francorchamps';
-  if (/nurburgring|nuerburgring|nordschleife/.test(c)) return 'nurburgring-nordschleife';
+  if (/nurburgring|nuerburgring|nordschleife|green hell|24h rennen|n24/.test(c)) return 'nurburgring-nordschleife';
   if (/le mans|sarthe/.test(c)) return 'circuit-de-la-sarthe';
   if (/daytona/.test(c)) return 'daytona-international-speedway';
   if (/sebring/.test(c)) return 'sebring-international-raceway';
   if (/bathurst|mount panorama/.test(c)) return 'mount-panorama-circuit';
   if (/paul ricard/.test(c)) return 'circuit-paul-ricard';
+  if (/monza/.test(c)) return 'autodromo-nazionale-monza';
+  if (/silverstone/.test(c)) return 'silverstone-circuit';
+  if (/suzuka/.test(c)) return 'suzuka-circuit';
+  if (/interlagos|jose carlos pace|sao paulo/.test(c)) return 'interlagos';
+  if (/road america/.test(c)) return 'road-america';
+  if (/indianapolis|indy/.test(c)) return 'indianapolis-motor-speedway';
+  if (/vir|virginia/.test(c)) return 'virginia-international-raceway';
+  if (/watkins glen/.test(c)) return 'watkins-glen-international';
+  if (/laguna seca/.test(c)) return 'weathertech-raceway-laguna-seca';
+  if (/road atlanta/.test(c)) return 'road-atlanta';
 
-  return slug(circuit);
+  return slug(circuit) || 'unknown-circuit';
+}
+
+function isMajorEnduranceEvent(title: string, circuit = '') {
+  const eventKey = canonicalEventTitle(title);
+  const text = cleanText(`${title} ${circuit}`);
+
+  return (
+    /^(24-hours-of-spa|24-hours-of-nurburgring|24-hours-of-le-mans|24-hours-of-daytona|24-hours-of-dubai|bathurst-12-hour|12-hours-of-sebring|petit-le-mans|6-hours-of-watkins-glen)$/.test(eventKey) ||
+    /(spa|nurburgring|nuerburgring|nordschleife|le mans|daytona|dubai|bathurst|sebring|petit le mans|watkins glen).*(24|12|6|hour|hours|h)/.test(text)
+  );
+}
+
+function canonicalEventIdentity({
+  eventKind,
+  title,
+  circuit,
+  startsAt,
+  series,
+}: {
+  eventKind: string;
+  title: string;
+  circuit: string;
+  startsAt?: Date | null;
+  series?: string | null;
+}) {
+  const year = startsAt?.getUTCFullYear() || Number(process.env.IMPORT_YEAR || new Date().getUTCFullYear());
+  const eventTitle = canonicalEventTitle(title);
+  const eventCircuit = canonicalCircuit(circuit);
+
+  // Major standalone endurance races are shared across series labels (GTWC/IGTC/etc.).
+  // Do not include series/date in the primary key so Spa/N24/Le Mans do not duplicate just
+  // because one source labels the same race differently.
+  if (isMajorEnduranceEvent(title, circuit)) {
+    return ['event', eventKind, year, eventTitle, eventCircuit];
+  }
+
+  // Generic rounds at the same track must include series + date, otherwise Monza/Spa/Paul
+  // Ricard rounds from different championships can collide and one event silently disappears.
+  return ['event', eventKind, year, canonicalSeriesGroup(series || ''), eventTitle, eventCircuit, compactDateKey(startsAt || null)];
 }
 
 function canonicalCategory(value: string, series = '') {
@@ -786,51 +864,121 @@ ${evidenceText}
 
 function eventSourceKey(event: EventInputType) {
   const startsAt = safeDate(event.startsAt);
-  const year = startsAt?.getUTCFullYear() || process.env.IMPORT_YEAR || new Date().getUTCFullYear();
-  return stableKey([
-    'event',
-    event.eventKind,
-    year,
-    canonicalEventTitle(event.title),
-    canonicalCircuit(event.circuit),
-  ]);
+  return stableKey(canonicalEventIdentity({
+    eventKind: event.eventKind,
+    title: event.title,
+    circuit: event.circuit,
+    startsAt,
+    series: event.series,
+  }));
 }
 
 async function findRelatedEvent(standing: StandingInputType) {
   if (!standing.eventTitle && !standing.eventCircuit && !standing.eventDate) return null;
 
   const eventDate = safeDate(standing.eventDate || undefined);
-  const year = eventDate?.getUTCFullYear() || process.env.IMPORT_YEAR || new Date().getUTCFullYear();
-  const sourceKey = stableKey([
-    'event',
-    standing.eventKind,
-    year,
-    canonicalEventTitle(standing.eventTitle || ''),
-    canonicalCircuit(standing.eventCircuit || ''),
-  ]);
+  const identity = canonicalEventIdentity({
+    eventKind: standing.eventKind,
+    title: standing.eventTitle || standing.series,
+    circuit: standing.eventCircuit || '',
+    startsAt: eventDate,
+    series: standing.series,
+  });
+  const sourceKey = stableKey(identity);
 
   const direct = await prisma.event.findUnique({ where: { sourceKey } });
   if (direct) return direct;
 
-  if (standing.eventTitle) {
-    const canonicalTitle = canonicalEventTitle(standing.eventTitle);
+  if (standing.eventTitle || standing.eventCircuit) {
+    const year = eventDate?.getUTCFullYear() || Number(process.env.IMPORT_YEAR || new Date().getUTCFullYear());
+    const canonicalTitle = canonicalEventTitle(standing.eventTitle || '');
+    const canonicalCircuitKey = canonicalCircuit(standing.eventCircuit || '');
+    const seriesGroup = canonicalSeriesGroup(standing.series || '');
     const candidates = await prisma.event.findMany({
       where: {
         eventKind: standing.eventKind as any,
-        startsAt: eventDate
-          ? {
-              gte: new Date(Date.UTC(year as number, 0, 1)),
-              lt: new Date(Date.UTC((year as number) + 1, 0, 1)),
-            }
-          : undefined,
+        startsAt: {
+          gte: new Date(Date.UTC(year, 0, 1)),
+          lt: new Date(Date.UTC(year + 1, 0, 1)),
+        },
       },
-      take: 100,
+      take: 300,
     });
 
-    return candidates.find((event) => canonicalEventTitle(event.title) === canonicalTitle) || null;
+    return (
+      candidates.find((event) => {
+        const sameTitle = standing.eventTitle ? canonicalEventTitle(event.title) === canonicalTitle : true;
+        const sameCircuit = standing.eventCircuit ? canonicalCircuit(event.circuit) === canonicalCircuitKey : true;
+        const sameSeries = isMajorEnduranceEvent(standing.eventTitle || event.title, standing.eventCircuit || event.circuit)
+          ? true
+          : canonicalSeriesGroup(event.series || '') === seriesGroup;
+        const sameDate = eventDate
+          ? Math.abs(new Date(event.startsAt).getTime() - eventDate.getTime()) <= 1000 * 60 * 60 * 24 * 3
+          : true;
+
+        return sameTitle && sameCircuit && sameSeries && sameDate;
+      }) || null
+    );
   }
 
   return null;
+}
+
+
+async function ensureRelatedEventFromStanding(standing: StandingInputType, provider: string) {
+  const existing = await findRelatedEvent(standing);
+  if (existing) return { event: existing, created: false, updated: false };
+
+  if (!standing.eventTitle || !standing.eventCircuit || !standing.eventDate) {
+    return { event: null, created: false, updated: false };
+  }
+
+  const startsAt = safeDate(standing.eventDate);
+  if (!startsAt || startsAt < getMinImportDate()) {
+    return { event: null, created: false, updated: false };
+  }
+
+  if (standing.eventKind === 'REAL' && hasBlacklistedSessionName(`${standing.eventTitle} ${standing.category}`)) {
+    return { event: null, created: false, updated: false };
+  }
+
+  const sourceKey = stableKey(canonicalEventIdentity({
+    eventKind: standing.eventKind,
+    title: standing.eventTitle,
+    circuit: standing.eventCircuit,
+    startsAt,
+    series: standing.series,
+  }));
+
+  const data = {
+    sourceKey,
+    title: standing.eventTitle,
+    series: standing.series,
+    category: standing.category,
+    eventKind: standing.eventKind as any,
+    circuit: standing.eventCircuit,
+    country: null,
+    startsAt,
+    endsAt: null,
+    priority: 1,
+    hasBrazilian: /(farfus|bortolotti|drudi|brazil|brasil|brasileir)/i.test(`${standing.driver} ${standing.team || ''}`),
+    hasVerstappen: /verstappen/i.test(`${standing.driver} ${standing.team || ''}`),
+    sourceUrl: standing.sourceUrl || provider,
+    notes: 'Evento criado automaticamente a partir de entry list validada.',
+  };
+
+  const created = await prisma.event.upsert({
+    where: { sourceKey },
+    create: data,
+    update: {
+      hasBrazilian: data.hasBrazilian,
+      hasVerstappen: data.hasVerstappen,
+      sourceUrl: data.sourceUrl,
+      notes: data.notes,
+    },
+  });
+
+  return { event: created, created: true, updated: false };
 }
 
 function shouldUpdateEvent(existing: any, incoming: EventInputType) {
@@ -892,7 +1040,9 @@ async function persistPayload(payloadUnknown: unknown, provider: string) {
   }
 
   for (const standing of payload.standings) {
-    const relatedEvent = await findRelatedEvent(standing);
+    const relatedEventResult = await ensureRelatedEventFromStanding(standing, provider);
+    const relatedEvent = relatedEventResult.event;
+    if (relatedEventResult.created) eventsCreated++;
     const driverKey = normalizeDriverGroup(standing.driver);
     const sourceKey = stableKey([
       'standing',

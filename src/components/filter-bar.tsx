@@ -20,17 +20,17 @@ export function FilterBar({
   placeholder?: string;
 }) {
   return (
-    <div className="glass mb-6 grid gap-3 rounded-3xl p-3 md:grid-cols-[1fr_240px]">
-      <label className="input flex items-center gap-2.5 px-4 py-0">
+    <div className="glass mb-6 grid min-w-0 gap-3 rounded-3xl p-3 md:grid-cols-[minmax(0,1fr)_240px]">
+      <label className="input flex min-w-0 items-center gap-2.5 px-4 py-0">
         <Search className="shrink-0 text-slate-400" size={17} />
         <input
-          className="w-full border-0 bg-transparent py-2.5 pl-0 pr-0 text-sm text-slate-100 outline-none ring-0 placeholder:text-slate-400 focus:outline-none"
+          className="min-w-0 flex-1 border-0 bg-transparent py-2.5 pl-0 pr-0 text-sm text-slate-100 outline-none ring-0 placeholder:text-slate-400 focus:outline-none"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder={placeholder}
         />
       </label>
-      <select className="input py-2.5" value={category} onChange={(e) => setCategory(e.target.value)}>
+      <select className="input min-w-0 py-2.5" value={category} onChange={(e) => setCategory(e.target.value)}>
         {categories.map((c) => (
           <option key={c} value={c}>
             {c}

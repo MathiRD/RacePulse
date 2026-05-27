@@ -26,22 +26,14 @@ export function Nav() {
       const currentScrollY = window.scrollY;
       const scrollingDown = currentScrollY > lastScrollY.current;
       const scrollingUp = currentScrollY < lastScrollY.current;
-
       const isDesktop = window.innerWidth >= 768;
 
-      /**
-       * No topo, a navbar sempre aparece.
-       */
       if (currentScrollY < 40) {
         setHidden(false);
         lastScrollY.current = currentScrollY;
         return;
       }
 
-      /**
-       * No desktop, só começa a esconder depois de rolar um pouco mais,
-       * para não sumir com qualquer micro scroll.
-       */
       if (isDesktop && currentScrollY < 160) {
         setHidden(false);
         lastScrollY.current = currentScrollY;
@@ -69,18 +61,18 @@ export function Nav() {
   return (
     <header
       className={[
-        'sticky top-4 z-50 mx-auto mb-8 w-full max-w-6xl px-4 transition-transform duration-300 ease-out md:mb-10',
+        'sticky top-4 z-50 mx-auto mb-8 w-full max-w-[min(72rem,calc(100vw-1.5rem))] transition-transform duration-300 ease-out md:mb-10',
         hidden ? '-translate-y-[140%]' : 'translate-y-0',
       ].join(' ')}
     >
-      <div className="glass rounded-[2rem] px-4 py-4 md:px-6">
-        <div className="flex items-center justify-between gap-4">
-          <Link href="/" onClick={closeMenu} className="flex items-center gap-3">
-            <span className="grid h-10 w-10 place-items-center rounded-full bg-emerald-300 text-slate-950">
+      <div className="glass min-w-0 overflow-hidden rounded-[2rem] px-4 py-4 md:px-6">
+        <div className="flex min-w-0 items-center justify-between gap-3 sm:gap-4">
+          <Link href="/" onClick={closeMenu} className="flex min-w-0 items-center gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-300 text-slate-950">
               <Gauge size={20} />
             </span>
 
-            <span className="text-lg font-black tracking-tight text-white">
+            <span className="min-w-0 truncate text-lg font-black tracking-tight text-white">
               Race Pulse
             </span>
           </Link>
@@ -107,7 +99,7 @@ export function Nav() {
           <button
             type="button"
             onClick={() => setOpen((value) => !value)}
-            className="grid h-11 w-11 place-items-center rounded-2xl border border-white/10 bg-white/10 text-white transition hover:bg-white/15 md:hidden"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/10 text-white transition hover:bg-white/15 md:hidden"
             aria-label={open ? 'Fechar menu' : 'Abrir menu'}
             aria-expanded={open}
           >

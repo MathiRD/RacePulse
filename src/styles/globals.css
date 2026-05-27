@@ -292,3 +292,48 @@ html.light .hover\:bg-white\/10:hover,
 .light .hover\:bg-white\/10:hover {
   background-color: rgba(241, 245, 249, 0.95) !important;
 }
+/* Mobile overflow guards */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  overflow-wrap: anywhere;
+}
+
+#__next,
+main,
+section,
+article,
+header,
+nav,
+.glass {
+  max-width: 100%;
+}
+
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .btn {
+    min-width: 0;
+    white-space: normal;
+  }
+
+  .pill {
+    max-width: 100%;
+  }
+}
