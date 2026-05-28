@@ -7,14 +7,29 @@ import { prisma } from '@/lib/prisma';
 import { ArrowRight, CalendarDays, Search, ShieldCheck, Trophy } from 'lucide-react';
 import Link from 'next/link';
 
+function seasonMinDate() {
+  const configured = process.env.IMPORT_MIN_DATE;
+  const parsed = configured ? new Date(configured) : null;
+
+  if (parsed && !Number.isNaN(parsed.getTime())) {
+    return parsed;
+  }
+
+  const year = Number(process.env.IMPORT_YEAR || new Date().getUTCFullYear());
+  const safeYear = Number.isFinite(year) ? year : new Date().getUTCFullYear();
+
+  return new Date(Date.UTC(safeYear, 0, 1, 0, 0, 0, 0));
+}
+
 export default async function HomePage() {
+  const now = new Date();
   const [events, standings, logs] = await Promise.all([
-    prisma.event.findMany({ where: { startsAt: { gte: new Date() } }, orderBy: [{ startsAt: 'asc' }, { priority: 'asc' }], take: 60 }),
+    prisma.event.findMany({ where: { startsAt: { gte: seasonMinDate() } }, orderBy: [{ startsAt: 'asc' }, { priority: 'asc' }], take: 60 }),
     prisma.standing.findMany({ orderBy: [{ series: 'asc' }, { category: 'asc' }, { position: 'asc' }], take: 60 }),
     prisma.importLog.findMany({ orderBy: { startedAt: 'desc' }, take: 1 }),
   ]);
 
-  const next = events.find((event) => event.startsAt >= new Date()) || events[0];
+  const next = events.find((event) => event.startsAt >= now) || events[0];
 
   return (
     <main className="min-h-screen max-w-full overflow-x-hidden px-3 py-4 sm:px-4">

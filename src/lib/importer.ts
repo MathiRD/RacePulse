@@ -275,7 +275,7 @@ function canonicalEventIdentity({
   // Do not include series/date in the primary key so Spa/N24/Le Mans do not duplicate just
   // because one source labels the same race differently.
   if (isMajorEnduranceEvent(title, circuit)) {
-    return ['event', eventKind, year, eventTitle, eventCircuit];
+    return ['event', eventKind, year, eventTitle, eventCircuit, compactDateKey(startsAt || null)];
   }
 
   // Generic rounds at the same track must include series + date, otherwise Monza/Spa/Paul
