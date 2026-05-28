@@ -857,7 +857,8 @@ Required JSON shape:
     contents: prompt,
     config: {
       tools: [{ googleSearch: {} }],
-      responseMimeType: 'application/json',
+      // Gemini API does not support responseMimeType together with tool use / Google Search grounding.
+      // Keep JSON-only rules in the prompt and parse/repair the returned text locally.
       temperature: 0,
     },
   });
