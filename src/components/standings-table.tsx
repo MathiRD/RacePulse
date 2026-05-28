@@ -78,16 +78,16 @@ export function StandingsTable({ standings }: { standings: Standing[] }) {
       ) : (
         <div className="glass overflow-hidden rounded-3xl">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[920px] text-left text-sm">
+            <table className="w-full min-w-[1160px] table-auto text-left text-sm">
               <thead className="bg-white/10 text-xs uppercase tracking-widest text-slate-400">
                 <tr>
                   <th className="w-[120px] px-5 py-4">Tipo</th>
                   <th className="w-[84px] px-5 py-4">Nº</th>
                   <th className="px-5 py-4">Pilotos</th>
                   <th className="px-5 py-4">Equipe</th>
-                  <th className="px-5 py-4">Série</th>
-                  <th className="px-5 py-4">Categoria</th>
-                  <th className="px-5 py-4">Carro</th>
+                  <th className="min-w-[210px] px-5 py-4">Série</th>
+                  <th className="w-[170px] min-w-[170px] whitespace-nowrap break-normal px-5 py-4" style={{ whiteSpace: 'nowrap', minWidth: 170 }}>Categoria</th>
+                  <th className="min-w-[180px] px-5 py-4">Carro</th>
                 </tr>
               </thead>
               <tbody>
@@ -109,9 +109,9 @@ export function StandingsTable({ standings }: { standings: Standing[] }) {
                       <td className="px-5 py-4 font-bold text-emerald-300">{standing.carNumber ? `#${standing.carNumber}` : '-'}</td>
                       <td className="px-5 py-4"><b>{standing.driver}</b></td>
                       <td className="px-5 py-4">{standing.team || '-'}</td>
-                      <td className="px-5 py-4">{standing.series}</td>
-                      <td className="px-5 py-4">{standing.category}</td>
-                      <td className="px-5 py-4">{standing.car || '-'}</td>
+                      <td className="min-w-[210px] px-5 py-4">{standing.series}</td>
+                      <td className="w-[170px] min-w-[170px] whitespace-nowrap break-normal px-5 py-4" style={{ whiteSpace: 'nowrap', minWidth: 170 }}>{standing.category}</td>
+                      <td className="min-w-[180px] px-5 py-4">{standing.car || '-'}</td>
                     </tr>
                   );
                 })}
