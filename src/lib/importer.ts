@@ -404,8 +404,14 @@ async function parseJsonFromTextWithRepair(rawText: string, ai: GoogleGenAI, mod
       repairedText: null as string | null,
     };
   } catch (error) {
+    if (!envFlag('IMPORT_ENABLE_JSON_REPAIR', false)) {
+      const invalidJson = extractJsonCandidate(rawText);
+      throw new Error(`Gemini retornou JSON inválido e o reparo está desativado. ${getJsonErrorContext(invalidJson, error)}`);
+    }
+
     const invalidJson = extractJsonCandidate(rawText);
     const context = getJsonErrorContext(invalidJson, error);
+    const repairModel = process.env.GEMINI_REPAIR_MODEL || model;
 
     const repairPrompt = `
 Repair this invalid JSON and return ONLY valid JSON.
@@ -427,7 +433,7 @@ ${invalidJson.slice(0, Number(process.env.IMPORT_JSON_REPAIR_MAX_CHARS || '70000
 `;
 
     const repairResponse = await generateGeminiWithRetry(ai, {
-      model,
+      model: repairModel,
       contents: repairPrompt,
       config: {
         responseMimeType: 'application/json',
@@ -501,7 +507,7 @@ function isRetryableGeminiError(error: unknown) {
 }
 
 async function generateGeminiWithRetry(ai: GoogleGenAI, args: Record<string, unknown>) {
-  const maxAttempts = Number(process.env.GEMINI_RETRY_ATTEMPTS || '4');
+  const maxAttempts = Math.max(1, Number(process.env.GEMINI_RETRY_ATTEMPTS || '1'));
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -521,7 +527,24 @@ async function generateGeminiWithRetry(ai: GoogleGenAI, args: Record<string, unk
   throw lastError;
 }
 
+function envFlag(name: string, defaultValue = false) {
+  const value = process.env[name];
+  if (value === undefined || value === null || value === '') return defaultValue;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+}
+
+function compactImportEnabled() {
+  return envFlag('IMPORT_COMPACT_MODE', true);
+}
+
 function buildImportTasks(query: string) {
+  const autoExpand = envFlag('IMPORT_AUTO_EXPAND_TASKS', false);
+  const maxTasks = Math.max(1, Number(process.env.IMPORT_MAX_TASKS || '1'));
+
+  if (compactImportEnabled() || !autoExpand || maxTasks === 1) {
+    return [query.trim()];
+  }
+
   const year = process.env.IMPORT_YEAR || String(new Date().getUTCFullYear());
   const base = query.trim();
   const tasks = [
@@ -534,7 +557,6 @@ function buildImportTasks(query: string) {
     `Official ${year} British GT, DTM GT3, International GT Open and Super Taikyu GT3 calendar and entry lists with drivers teams cars. Exclude tests and esports. ${base}`,
   ];
 
-  const maxTasks = Math.max(1, Number(process.env.IMPORT_MAX_TASKS || '7'));
   return tasks.slice(0, maxTasks);
 }
 
@@ -744,6 +766,117 @@ function sanitizeImportPayload(input: any): ImportPayloadType {
     summary: input?.summary ? String(input.summary).trim() : '',
     events,
     standings,
+  };
+}
+
+
+async function importCompactWithGemini(query: string) {
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY vazia. Configure a chave antes de executar importação real.');
+  }
+
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const model = process.env.GEMINI_SEARCH_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+  const minDate = getMinImportDate().toISOString().slice(0, 10);
+  const year = process.env.IMPORT_YEAR || String(new Date().getUTCFullYear());
+
+  const prompt = `
+You are a grounded motorsport data importer for RacePulse.
+Use Google Search grounding and return ONLY valid JSON matching the requested schema.
+
+Goal:
+Collect the maximum reliable ${year}+ GT3/endurance racing data in ONE response, minimizing API requests.
+
+User query:
+${query}
+
+Minimum date:
+${minDate}
+Ignore events before this date.
+
+Hard rules:
+- Return only valid JSON. No markdown, no commentary.
+- Use only grounded/search-supported facts. Do not invent dates, drivers, teams, cars or URLs.
+- Prefer official sources: FIA WEC, Le Mans, SRO/GTWC, IGTC, IMSA, ELMS, ALMS, 24H Series, NLS/N24, British GT, DTM, GT Open and official event/circuit pages.
+- Events must be main race events. Never use trial, test day, testing, official test, prologue, practice, media day, qualifying-only, warm-up or pre-event dates as race dates.
+- If a page contains both test/prologue dates and the real race date, return only the real main race date.
+- Separate esports/virtual events with eventKind:"ESPORT". Real racing must be eventKind:"REAL".
+- For drivers/teams/cars, return as standings with kind:"ENTRY_LIST".
+- carNumber is the car number, not a race position.
+- position is only display order for ENTRY_LIST when no real result exists.
+- For now, always set points:null and gap:null.
+- Do not mix Formula 1, Stock Car, NASCAR or unrelated categories unless the driver/team is explicitly listed in a GT3/endurance entry list.
+- Keep category standardized: GT3, GT3 Endurance, GT3 Sprint, LMGT3, GTD, GTD Pro, SP9 GT3, Endurance.
+- If an entry list has eventTitle + eventCircuit + eventDate, include all three so the system can create/link the parent event.
+- For major races such as Spa 24h, Nürburgring 24h, Le Mans 24h, Daytona 24h, Sebring 12h, Bathurst 12h, Dubai 24H and Petit Le Mans, always prefer the official main race event date.
+
+Required JSON shape:
+{
+  "summary": "string",
+  "events": [
+    {
+      "title": "official event name",
+      "series": "official series name",
+      "category": "GT3 | GT3 Endurance | GT3 Sprint | LMGT3 | GTD | GTD Pro | SP9 GT3 | Endurance",
+      "eventKind": "REAL or ESPORT",
+      "circuit": "official circuit name",
+      "country": "country or null",
+      "startsAt": "YYYY-MM-DDT12:00:00.000Z",
+      "endsAt": "YYYY-MM-DDT12:00:00.000Z or null",
+      "priority": 1,
+      "hasBrazilian": false,
+      "hasVerstappen": false,
+      "sourceUrl": "official/source URL or null",
+      "notes": "short evidence-based note or null"
+    }
+  ],
+  "standings": [
+    {
+      "eventTitle": "related event title or null",
+      "eventCircuit": "related circuit or null",
+      "eventDate": "YYYY-MM-DD or null",
+      "series": "series",
+      "category": "class/category",
+      "kind": "ENTRY_LIST",
+      "eventKind": "REAL or ESPORT",
+      "position": 1,
+      "carNumber": "number without # or null",
+      "driver": "driver names separated by /",
+      "team": "team or null",
+      "car": "car model or null",
+      "points": null,
+      "gap": null,
+      "sourceUrl": "source URL or null"
+    }
+  ]
+}
+`;
+
+  const response = await generateGeminiWithRetry(ai, {
+    model,
+    contents: prompt,
+    config: {
+      tools: [{ googleSearch: {} }],
+      responseMimeType: 'application/json',
+      temperature: 0,
+    },
+  });
+
+  const rawText = String((response as any).text || '');
+  const parsedJsonResult = await parseJsonFromTextWithRepair(rawText, ai, model);
+  const sanitized = sanitizeImportPayload(parsedJsonResult.json);
+  const parsed = ImportPayload.parse(sanitized);
+
+  if (!(parsed.events.length > 0) && !(parsed.standings.length > 0)) {
+    throw new Error('Gemini não retornou eventos ou entry lists validáveis no modo compacto. Nada foi salvo.');
+  }
+
+  return {
+    json: parsed,
+    rawText: parsedJsonResult.repaired
+      ? `${rawText}\n\n--- JSON REPAIRED BY GEMINI ---\n${parsedJsonResult.repairedText}`
+      : rawText,
+    model,
   };
 }
 
@@ -1129,20 +1262,37 @@ export async function runImport(
     provider,
     stages: [],
     minDate: getMinImportDate().toISOString(),
-    maxTasks: process.env.IMPORT_MAX_TASKS || '7',
+    maxTasks: process.env.IMPORT_MAX_TASKS || '1',
+    compactMode: compactImportEnabled(),
+    autoExpandTasks: envFlag('IMPORT_AUTO_EXPAND_TASKS', false),
+    jsonRepairEnabled: envFlag('IMPORT_ENABLE_JSON_REPAIR', false),
     pointsAndGapDisabled: true,
-    searchArchitecture: 'grounded-search -> normalizer -> local-validator -> smart-merge',
+    searchArchitecture: compactImportEnabled()
+      ? 'compact-grounded-json -> local-validator -> smart-merge'
+      : 'grounded-search -> normalizer -> local-validator -> smart-merge',
   };
 
   try {
-    (diagnostics.stages as string[]).push('collect_evidence');
-    const collected = await collectEvidence(query, Boolean(options?.force));
-    diagnostics.tasks = collected.tasks;
-    diagnostics.evidenceCount = collected.evidences.length;
-    diagnostics.evidenceFailures = collected.failures;
+    let normalized: Awaited<ReturnType<typeof normalizeEvidenceWithGemini>>;
+    let collected: Awaited<ReturnType<typeof collectEvidence>> | null = null;
 
-    (diagnostics.stages as string[]).push('gemini_normalize');
-    const normalized = await normalizeEvidenceWithGemini(collected.evidences, query);
+    if (compactImportEnabled()) {
+      (diagnostics.stages as string[]).push('compact_grounded_json');
+      normalized = await importCompactWithGemini(query);
+      diagnostics.tasks = [query];
+      diagnostics.evidenceCount = 1;
+      diagnostics.evidenceFailures = [];
+    } else {
+      (diagnostics.stages as string[]).push('collect_evidence');
+      collected = await collectEvidence(query, Boolean(options?.force));
+      diagnostics.tasks = collected.tasks;
+      diagnostics.evidenceCount = collected.evidences.length;
+      diagnostics.evidenceFailures = collected.failures;
+
+      (diagnostics.stages as string[]).push('gemini_normalize');
+      normalized = await normalizeEvidenceWithGemini(collected.evidences, query);
+    }
+
     diagnostics.normalizedEvents = normalized.json.events.length;
     diagnostics.normalizedEntries = normalized.json.standings.length;
 
@@ -1172,7 +1322,7 @@ export async function runImport(
         status: 'SUCCESS',
         message,
         llmModel: normalized.model,
-        rawSearchJson: collected as any,
+        rawSearchJson: (collected || { compactMode: true, query }) as any,
         llmRawText: normalized.rawText,
         parsedJson: parsed as any,
         eventsCreated,
