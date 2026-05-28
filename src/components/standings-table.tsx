@@ -18,11 +18,26 @@ type Standing = {
   gap?: string | null;
 };
 
+function groupedCategory(category: string) {
+  const value = category.trim();
+  const upper = value.toUpperCase();
+
+  if (/\bGT3\b/.test(upper) && !/LMGT3|GTD/.test(upper)) {
+    return 'GT3';
+  }
+
+  return value;
+}
+
+function groupedCategories(categories: string[]) {
+  return Array.from(new Set(categories.map(groupedCategory))).sort();
+}
+
 function preferredCategory(categories: string[]) {
   return (
-    categories.find((category) => /GT3/i.test(category)) ||
+    categories.find((category) => category === 'GT3') ||
     categories.find((category) => /Endurance/i.test(category)) ||
-    categories.find((category) => /LMGT3|GTD|SP9/i.test(category)) ||
+    categories.find((category) => /LMGT3|GTD/i.test(category)) ||
     categories[0] ||
     ALL_FILTER_VALUE
   );
@@ -33,7 +48,7 @@ export function StandingsTable({ standings }: { standings: Standing[] }) {
   const [category, setCategory] = useState('');
 
   const categories = useMemo(
-    () => Array.from(new Set(standings.map((standing) => standing.category).filter(Boolean))).sort(),
+    () => groupedCategories(Array.from(new Set(standings.map((standing) => standing.category).filter(Boolean)))),
     [standings],
   );
   const selectedCategory = category || preferredCategory(categories);
@@ -43,7 +58,7 @@ export function StandingsTable({ standings }: { standings: Standing[] }) {
       `${standing.series} ${standing.category} ${standing.driver} ${standing.team} ${standing.car} ${standing.carNumber}`
         .toLowerCase()
         .includes(q.toLowerCase()) &&
-      (selectedCategory === ALL_FILTER_VALUE || !selectedCategory || standing.category === selectedCategory),
+      (selectedCategory === ALL_FILTER_VALUE || !selectedCategory || groupedCategory(standing.category) === selectedCategory),
   );
 
   return (

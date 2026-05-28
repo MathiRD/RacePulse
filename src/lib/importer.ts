@@ -1,20 +1,23 @@
-import { createHash } from 'crypto';
-import { GoogleGenAI } from '@google/genai';
-import { z } from 'zod';
-import { prisma } from '@/lib/prisma';
-import { cache } from '@/lib/cache';
+import { createHash } from "crypto";
+import { GoogleGenAI } from "@google/genai";
+import { z } from "zod";
+import { prisma } from "@/lib/prisma";
+import { cache } from "@/lib/cache";
 
-const EVENT_KIND = ['REAL', 'ESPORT'] as const;
-const STANDING_KIND = ['ENTRY_LIST', 'STANDINGS'] as const;
+const EVENT_KIND = ["REAL", "ESPORT"] as const;
+const STANDING_KIND = ["ENTRY_LIST", "STANDINGS"] as const;
 
 const EventInput = z.object({
   title: z.string().min(2),
   series: z.string().min(2),
   category: z.string().min(1),
-  eventKind: z.enum(EVENT_KIND).default('REAL'),
+  eventKind: z.enum(EVENT_KIND).default("REAL"),
   circuit: z.string().min(1),
   country: z.string().optional().nullable(),
-  startsAt: z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}/)),
+  startsAt: z
+    .string()
+    .datetime()
+    .or(z.string().regex(/^\d{4}-\d{2}-\d{2}/)),
   endsAt: z.string().optional().nullable(),
   priority: z.number().int().min(1).max(3).default(3),
   hasBrazilian: z.boolean().default(false),
@@ -29,8 +32,8 @@ const StandingInput = z.object({
   eventDate: z.string().optional().nullable(),
   series: z.string().min(2),
   category: z.string().min(1),
-  kind: z.enum(STANDING_KIND).default('ENTRY_LIST'),
-  eventKind: z.enum(EVENT_KIND).default('REAL'),
+  kind: z.enum(STANDING_KIND).default("ENTRY_LIST"),
+  eventKind: z.enum(EVENT_KIND).default("REAL"),
   position: z.number().int().positive().default(1),
   carNumber: z.string().optional().nullable(),
   driver: z.string().min(1),
@@ -44,7 +47,7 @@ const StandingInput = z.object({
 const ImportPayload = z.object({
   events: z.array(EventInput).default([]),
   standings: z.array(StandingInput).default([]),
-  summary: z.string().default(''),
+  summary: z.string().default(""),
 });
 
 type ImportPayloadType = z.infer<typeof ImportPayload>;
@@ -63,7 +66,7 @@ type StandingInputType = z.infer<typeof StandingInput>;
 export type ImportDebugResult = {
   ok: boolean;
   logId: string;
-  status: 'SUCCESS' | 'FAILED';
+  status: "SUCCESS" | "FAILED";
   message: string;
   eventsCreated: number;
   eventsUpdated: number;
@@ -73,56 +76,56 @@ export type ImportDebugResult = {
 };
 
 const EVENT_BLACKLIST = [
-  'trial',
-  'test day',
-  'test days',
-  'testing',
-  'official test',
-  'prologue',
-  'practice',
-  'free practice',
-  'media day',
-  'track day',
-  'trackday',
-  'pre-event',
-  'pre event',
-  'qualifying',
-  'warm up',
-  'warm-up',
+  "trial",
+  "test day",
+  "test days",
+  "testing",
+  "official test",
+  "prologue",
+  "practice",
+  "free practice",
+  "media day",
+  "track day",
+  "trackday",
+  "pre-event",
+  "pre event",
+  "qualifying",
+  "warm up",
+  "warm-up",
 ];
 
 const ESPORT_TERMS = [
-  'esport',
-  'e-sport',
-  'virtual',
-  'sim racing',
-  'simracing',
-  'iracing',
-  'assetto corsa',
-  'racing game',
-  'renn esport',
+  "esport",
+  "e-sport",
+  "virtual",
+  "sim racing",
+  "simracing",
+  "iracing",
+  "assetto corsa",
+  "racing game",
+  "renn esport",
 ];
 
 const OFFICIAL_DOMAINS = [
-  'fiawec.com',
-  '24h-lemans.com',
-  'europeanlemansseries.com',
-  'asianlemansseries.com',
-  'lemanscup.com',
-  'gt-world-challenge-europe.com',
-  'gt-world-challenge-america.com',
-  'gt-world-challenge-asia.com',
-  'intercontinentalgtchallenge.com',
-  'sro-motorsports.com',
-  'britishgt.com',
-  'imsa.com',
-  'nuerburgring-langstrecken-serie.de',
-  '24h-rennen.de',
-  '24hseries.com',
-  'dtm.com',
-  'gtopen.net',
-  'supertaikyu.com',
-  'bathurst12hour.com.au',
+  "fiawec.com",
+  "24h-lemans.com",
+  "europeanlemansseries.com",
+  "asianlemansseries.com",
+  "lemanscup.com",
+  "gt-world-challenge-europe.com",
+  "gt-world-challenge-america.com",
+  "gt-world-challenge-asia.com",
+  "intercontinentalgtchallenge.com",
+  "sro-motorsports.com",
+  "britishgt.com",
+  "imsa.com",
+  "nuerburgring-langstrecken-serie.de",
+  "24h-rennen.de",
+  "24hseries.com",
+  "dtm.com",
+  "gtopen.net",
+  "supertaikyu.com",
+  "bathurst12hour.com.au",
 ];
 
 function sleep(ms: number) {
@@ -140,7 +143,17 @@ function getMinImportDate() {
   // in the target season, like Nürburgring 24h, can be returned by the LLM but filtered out
   // before persisting.
   const year = Number(process.env.IMPORT_YEAR || new Date().getUTCFullYear());
-  return new Date(Date.UTC(Number.isFinite(year) ? year : new Date().getUTCFullYear(), 0, 1, 0, 0, 0, 0));
+  return new Date(
+    Date.UTC(
+      Number.isFinite(year) ? year : new Date().getUTCFullYear(),
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+    ),
+  );
 }
 
 function safeDate(value: string | null | undefined) {
@@ -158,100 +171,235 @@ function getErrorDetail(error: unknown) {
 }
 
 function stableKey(parts: Array<string | number | null | undefined>) {
-  return createHash('sha256')
-    .update(parts.map((part) => String(part ?? '').trim().toLowerCase()).join('|'))
-    .digest('hex');
+  return createHash("sha256")
+    .update(
+      parts
+        .map((part) =>
+          String(part ?? "")
+            .trim()
+            .toLowerCase(),
+        )
+        .join("|"),
+    )
+    .digest("hex");
 }
 
 function cleanText(value: unknown) {
-  return String(value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[’']/g, '')
-    .replace(/&/g, ' and ')
-    .replace(/[^a-zA-Z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[’']/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
 }
 
 function slug(value: unknown) {
-  return cleanText(value).replace(/\s+/g, '-');
+  return cleanText(value).replace(/\s+/g, "-");
 }
 
 function compactDateKey(value: Date | null) {
-  return value ? value.toISOString().slice(0, 10) : '';
+  return value ? value.toISOString().slice(0, 10) : "";
 }
 
 function canonicalSeriesGroup(series: string) {
   const text = cleanText(series);
 
-  if (/gt world challenge|sro|intercontinental gt challenge|igtc|british gt|gt2 european|gt4 european/.test(text)) return 'sro-gt';
-  if (/fia world endurance|\bwec\b|le mans/.test(text)) return 'fia-wec-le-mans';
-  if (/imsa|weathertech|michelin endurance cup/.test(text)) return 'imsa';
-  if (/european le mans|\belms\b/.test(text)) return 'elms';
-  if (/asian le mans|\balms\b/.test(text)) return 'alms';
-  if (/24h series|creventic/.test(text)) return '24h-series';
-  if (/nls|nurburgring langstrecken|nu?rburgring langstrecken/.test(text)) return 'nls';
-  if (/dtm/.test(text)) return 'dtm';
-  if (/gt open/.test(text)) return 'gt-open';
+  if (
+    /gt world challenge|sro|intercontinental gt challenge|igtc|british gt|gt2 european|gt4 european/.test(
+      text,
+    )
+  )
+    return "sro-gt";
+  if (/fia world endurance|\bwec\b|le mans/.test(text))
+    return "fia-wec-le-mans";
+  if (/imsa|weathertech|michelin endurance cup/.test(text)) return "imsa";
+  if (/european le mans|\belms\b/.test(text)) return "elms";
+  if (/asian le mans|\balms\b/.test(text)) return "alms";
+  if (/24h series|creventic/.test(text)) return "24h-series";
+  if (/nls|nurburgring langstrecken|nu?rburgring langstrecken/.test(text))
+    return "nls";
+  if (/dtm/.test(text)) return "dtm";
+  if (/gt open/.test(text)) return "gt-open";
 
-  return slug(series || 'unknown-series');
+  return slug(series || "unknown-series");
 }
 
-function canonicalEventTitle(title: string) {
-  const t = cleanText(title);
+const EVENT_SPONSOR_WORDS = [
+  "adac",
+  "ravenol",
+  "crowdstrike",
+  "totalenergies",
+  "total energies",
+  "rolex",
+  "motul",
+  "michelin",
+  "fanatec",
+  "aws",
+  "powered by aws",
+  "liqui moly",
+  "aramco",
+  "qatar airways",
+  "bapco energies",
+  "imsa michelin",
+];
 
-  if (/(spa|francorchamps).*(24|twenty four)|24.*(spa|francorchamps)/.test(t)) return '24-hours-of-spa';
-  if (/(n24|24h rennen|24 h rennen|24h race|24 hour race|24 hours of n|nurburgring|nuerburgring|nordschleife).*(24|twenty four|rennen|race)|24.*(n24|nurburgring|nuerburgring|nordschleife)|\bn24\b/.test(t)) return '24-hours-of-nurburgring';
-  if (/(le mans).*(24|twenty four)|24.*le mans/.test(t)) return '24-hours-of-le-mans';
-  if (/(daytona).*(24|twenty four)|24.*daytona/.test(t)) return '24-hours-of-daytona';
-  if (/(dubai).*(24|twenty four)|24.*dubai/.test(t)) return '24-hours-of-dubai';
-  if (/(bathurst).*(12|twelve)|12.*bathurst/.test(t)) return 'bathurst-12-hour';
-  if (/(sebring).*(12|twelve)|12.*sebring/.test(t)) return '12-hours-of-sebring';
-  if (/petit.*le.*mans/.test(t)) return 'petit-le-mans';
-  if (/watkins.*glen/.test(t)) return '6-hours-of-watkins-glen';
+function stripEventSponsorWords(value: string) {
+  let text = cleanText(value);
 
-  const hourRace = t.match(/(?:^|\b)(\d{1,2})\s*(?:h|hour|hours|hrs)\b.*(?:of\s+)?([a-z0-9 ]{3,60})/);
-  if (hourRace?.[1] && hourRace?.[2]) {
-    return `${hourRace[1]}-hours-${slug(hourRace[2])}`;
+  for (const sponsor of EVENT_SPONSOR_WORDS) {
+    const sponsorText = cleanText(sponsor);
+    text = text
+      .replace(new RegExp(`^${sponsorText}\\b\\s*`, "i"), "")
+      .replace(new RegExp(`\\b${sponsorText}\\b`, "gi"), " ");
   }
 
-  return slug(title.replace(/entry list|calendar|schedule|round \d+|race week|official|provisional/gi, '')) || 'unknown-event';
+  return text
+    .replace(
+      /\b(main race|race event|official|provisional|entry list|calendar|schedule|race week)\b/g,
+      " ",
+    )
+    .replace(/\b(round|rd)\s*\d+\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractDurationToken(value: string) {
+  const text = cleanText(value);
+
+  if (/\b24\s*(h|hour|hours|hrs)\b|\btwenty four\b/.test(text)) return "24h";
+  if (/\b12\s*(h|hour|hours|hrs)\b|\btwelve\b/.test(text)) return "12h";
+  if (/\b10\s*(h|hour|hours|hrs)\b|\bten\b/.test(text)) return "10h";
+  if (/\b8\s*(h|hour|hours|hrs)\b|\beight\b/.test(text)) return "8h";
+  if (/\b6\s*(h|hour|hours|hrs)\b|\bsix\b/.test(text)) return "6h";
+  if (/\b4\s*(h|hour|hours|hrs)\b|\bfour\b/.test(text)) return "4h";
+  if (/\b3\s*(h|hour|hours|hrs)\b|\bthree\b/.test(text)) return "3h";
+  if (/\b2\s*(h|hour|hours|hrs)\b|\btwo\b/.test(text)) return "2h";
+
+  return "";
+}
+
+function structuralEventToken(value: string) {
+  const text = cleanText(value);
+  const tokens = [
+    "sprint",
+    "endurance",
+    "summer race",
+    "winter race",
+    "classic",
+    "grand prix",
+    "nls",
+    "qualifiers",
+    "qualifying race",
+    "race of champions",
+    "road race showcase",
+  ];
+
+  return tokens.find((token) => text.includes(token)) || "";
+}
+
+function canonicalEventTitle(title: string, circuit = "") {
+  const raw = cleanText(`${title} ${circuit}`);
+  const t = stripEventSponsorWords(title);
+  const combined = cleanText(`${t} ${circuit}`);
+  const duration = extractDurationToken(`${title} ${circuit}`);
+
+  if (
+    (duration === "24h" || /\bn24\b|24h rennen|24 h rennen/.test(raw)) &&
+    /(nurburgring|nuerburgring|nordschleife|n24|24h rennen)/.test(combined)
+  )
+    return "24-hours-of-nurburgring";
+  if (duration === "24h" && /(spa|francorchamps)/.test(combined))
+    return "24-hours-of-spa";
+  if (duration === "24h" && /le mans|sarthe/.test(combined))
+    return "24-hours-of-le-mans";
+  if (duration === "24h" && /daytona/.test(combined))
+    return "24-hours-of-daytona";
+  if (duration === "24h" && /dubai/.test(combined)) return "24-hours-of-dubai";
+  if (duration === "12h" && /bathurst|mount panorama/.test(combined))
+    return "bathurst-12-hour";
+  if (duration === "12h" && /sebring/.test(combined))
+    return "12-hours-of-sebring";
+  if (/petit.*le.*mans/.test(combined)) return "petit-le-mans";
+  if (duration === "6h" && /watkins.*glen/.test(combined))
+    return "6-hours-of-watkins-glen";
+
+  const structural = structuralEventToken(t);
+  const hourRace = t.match(
+    /(?:^|\b)(\d{1,2})\s*(?:h|hour|hours|hrs)\b(?:\s+of)?\s+([a-z0-9 ]{3,60})/,
+  );
+  if (hourRace?.[1] && hourRace?.[2]) {
+    const name =
+      slug(hourRace[2].replace(/\brace\b/g, "")) || slug(circuit) || "event";
+    return `${hourRace[1]}-hours-${name}`;
+  }
+
+  const cleaned = t
+    .replace(/\brace\s+at\s+the\b/g, " ")
+    .replace(/\brace\s+at\b/g, " ")
+    .replace(/\bthe\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const base = slug(`${duration} ${structural} ${cleaned}`) || "unknown-event";
+  return base.replace(/-+/g, "-").replace(/^-|-$/g, "");
 }
 
 function canonicalCircuit(circuit: string) {
   const c = cleanText(circuit);
 
-  if (/spa|francorchamps/.test(c)) return 'circuit-de-spa-francorchamps';
-  if (/nurburgring|nuerburgring|nordschleife|green hell|24h rennen|n24/.test(c)) return 'nurburgring-nordschleife';
-  if (/le mans|sarthe/.test(c)) return 'circuit-de-la-sarthe';
-  if (/daytona/.test(c)) return 'daytona-international-speedway';
-  if (/sebring/.test(c)) return 'sebring-international-raceway';
-  if (/bathurst|mount panorama/.test(c)) return 'mount-panorama-circuit';
-  if (/paul ricard/.test(c)) return 'circuit-paul-ricard';
-  if (/monza/.test(c)) return 'autodromo-nazionale-monza';
-  if (/silverstone/.test(c)) return 'silverstone-circuit';
-  if (/suzuka/.test(c)) return 'suzuka-circuit';
-  if (/interlagos|jose carlos pace|sao paulo/.test(c)) return 'interlagos';
-  if (/road america/.test(c)) return 'road-america';
-  if (/indianapolis|indy/.test(c)) return 'indianapolis-motor-speedway';
-  if (/vir|virginia/.test(c)) return 'virginia-international-raceway';
-  if (/watkins glen/.test(c)) return 'watkins-glen-international';
-  if (/laguna seca/.test(c)) return 'weathertech-raceway-laguna-seca';
-  if (/road atlanta/.test(c)) return 'road-atlanta';
+  if (/spa|francorchamps/.test(c)) return "circuit-de-spa-francorchamps";
+  if (/nurburgring|nuerburgring|nordschleife|green hell|24h rennen|n24/.test(c))
+    return "nurburgring-nordschleife";
+  if (/le mans|sarthe/.test(c)) return "circuit-de-la-sarthe";
+  if (/daytona/.test(c)) return "daytona-international-speedway";
+  if (/sebring/.test(c)) return "sebring-international-raceway";
+  if (/bathurst|mount panorama/.test(c)) return "mount-panorama-circuit";
+  if (/paul ricard/.test(c)) return "circuit-paul-ricard";
+  if (/monza/.test(c)) return "autodromo-nazionale-monza";
+  if (/silverstone/.test(c)) return "silverstone-circuit";
+  if (/suzuka/.test(c)) return "suzuka-circuit";
+  if (/interlagos|jose carlos pace|sao paulo/.test(c)) return "interlagos";
+  if (/road america/.test(c)) return "road-america";
+  if (/indianapolis|indy/.test(c)) return "indianapolis-motor-speedway";
+  if (/vir|virginia/.test(c)) return "virginia-international-raceway";
+  if (/watkins glen/.test(c)) return "watkins-glen-international";
+  if (/laguna seca/.test(c)) return "weathertech-raceway-laguna-seca";
+  if (/road atlanta/.test(c)) return "road-atlanta";
 
-  return slug(circuit) || 'unknown-circuit';
+  return slug(circuit) || "unknown-circuit";
 }
 
-function isMajorEnduranceEvent(title: string, circuit = '') {
-  const eventKey = canonicalEventTitle(title);
-  const text = cleanText(`${title} ${circuit}`);
+function isMajorEnduranceEvent(title: string, circuit = "") {
+  const eventKey = canonicalEventTitle(title, circuit);
 
-  return (
-    /^(24-hours-of-spa|24-hours-of-nurburgring|24-hours-of-le-mans|24-hours-of-daytona|24-hours-of-dubai|bathurst-12-hour|12-hours-of-sebring|petit-le-mans|6-hours-of-watkins-glen)$/.test(eventKey) ||
-    /(spa|nurburgring|nuerburgring|nordschleife|le mans|daytona|dubai|bathurst|sebring|petit le mans|watkins glen).*(24|12|6|hour|hours|h)/.test(text)
+  return /^(24-hours-of-spa|24-hours-of-nurburgring|24-hours-of-le-mans|24-hours-of-daytona|24-hours-of-dubai|bathurst-12-hour|12-hours-of-sebring|petit-le-mans|6-hours-of-watkins-glen)$/.test(
+    eventKey,
   );
+}
+
+function eventDateBucket(startsAt?: Date | null) {
+  return startsAt ? startsAt.toISOString().slice(0, 10) : "no-date";
+}
+
+function displayEventTitle(title: string, circuit = "") {
+  const key = canonicalEventTitle(title, circuit);
+
+  const titles: Record<string, string> = {
+    "24-hours-of-nurburgring": "24 Hours of Nürburgring",
+    "24-hours-of-spa": "24 Hours of Spa",
+    "24-hours-of-le-mans": "24 Hours of Le Mans",
+    "24-hours-of-daytona": "24 Hours of Daytona",
+    "24-hours-of-dubai": "Dubai 24H",
+    "bathurst-12-hour": "Bathurst 12 Hour",
+    "12-hours-of-sebring": "12 Hours of Sebring",
+    "petit-le-mans": "Petit Le Mans",
+    "6-hours-of-watkins-glen": "6 Hours of Watkins Glen",
+  };
+
+  return titles[key] || title;
 }
 
 function canonicalEventIdentity({
@@ -267,40 +415,59 @@ function canonicalEventIdentity({
   startsAt?: Date | null;
   series?: string | null;
 }) {
-  const year = startsAt?.getUTCFullYear() || Number(process.env.IMPORT_YEAR || new Date().getUTCFullYear());
-  const eventTitle = canonicalEventTitle(title);
+  const year =
+    startsAt?.getUTCFullYear() ||
+    Number(process.env.IMPORT_YEAR || new Date().getUTCFullYear());
+  const eventTitle = canonicalEventTitle(title, circuit);
   const eventCircuit = canonicalCircuit(circuit);
+  const duration = extractDurationToken(`${title} ${circuit}`) || "no-duration";
+  const structural = structuralEventToken(title) || "event";
+  const dateBucket = eventDateBucket(startsAt || null);
 
-  // Major standalone endurance races are shared across series labels (GTWC/IGTC/etc.).
-  // Do not include series/date in the primary key so Spa/N24/Le Mans do not duplicate just
-  // because one source labels the same race differently.
   if (isMajorEnduranceEvent(title, circuit)) {
-    return ['event', eventKind, year, eventTitle, eventCircuit, compactDateKey(startsAt || null)];
+    return [
+      "event",
+      eventKind,
+      year,
+      "major-endurance",
+      eventTitle,
+      eventCircuit,
+      dateBucket,
+    ];
   }
 
-  // Generic rounds at the same track must include series + date, otherwise Monza/Spa/Paul
-  // Ricard rounds from different championships can collide and one event silently disappears.
-  return ['event', eventKind, year, canonicalSeriesGroup(series || ''), eventTitle, eventCircuit, compactDateKey(startsAt || null)];
+  return [
+    "event",
+    eventKind,
+    year,
+    canonicalSeriesGroup(series || ""),
+    duration,
+    structural,
+    eventTitle,
+    eventCircuit,
+    dateBucket,
+  ];
 }
 
-function canonicalCategory(value: string, series = '') {
+function canonicalCategory(value: string, series = "") {
   const text = cleanText(`${series} ${value}`);
 
-  if (/lmgt3/.test(text)) return 'LMGT3';
-  if (/gtd pro/.test(text)) return 'GTD Pro';
-  if (/gtd/.test(text)) return 'GTD';
-  if (/sp9/.test(text)) return 'SP9 GT3';
-  if (/gt world challenge.*endurance|endurance cup/.test(text)) return 'GT3 Endurance';
-  if (/gt world challenge.*sprint|sprint cup/.test(text)) return 'GT3 Sprint';
-  if (/gt3/.test(text)) return 'GT3';
-  if (/endurance/.test(text)) return 'Endurance';
+  if (/lmgt3/.test(text)) return "LMGT3";
+  if (/gtd pro/.test(text)) return "GTD Pro";
+  if (/gtd/.test(text)) return "GTD";
+  if (/sp9/.test(text)) return "SP9 GT3";
+  if (/gt world challenge.*endurance|endurance cup/.test(text))
+    return "GT3 Endurance";
+  if (/gt world challenge.*sprint|sprint cup/.test(text)) return "GT3 Sprint";
+  if (/gt3/.test(text)) return "GT3";
+  if (/endurance/.test(text)) return "Endurance";
 
-  return value.trim() || 'GT3 / Endurance';
+  return value.trim() || "GT3 / Endurance";
 }
 
 function detectEventKind(value: string, sourceUrl?: string | null) {
-  const text = cleanText(`${value} ${sourceUrl || ''}`);
-  return ESPORT_TERMS.some((term) => text.includes(term)) ? 'ESPORT' : 'REAL';
+  const text = cleanText(`${value} ${sourceUrl || ""}`);
+  return ESPORT_TERMS.some((term) => text.includes(term)) ? "ESPORT" : "REAL";
 }
 
 function hasBlacklistedSessionName(value: string) {
@@ -311,8 +478,10 @@ function hasBlacklistedSessionName(value: string) {
 function isOfficialSource(url?: string | null) {
   if (!url) return false;
   try {
-    const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
-    return OFFICIAL_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+    const host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+    return OFFICIAL_DOMAINS.some(
+      (domain) => host === domain || host.endsWith(`.${domain}`),
+    );
   } catch {
     return false;
   }
@@ -335,17 +504,17 @@ function normalizePriority(value: unknown) {
 function stripJsonFence(text: string) {
   return text
     .trim()
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/```$/i, '')
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
     .trim();
 }
 
 function extractJsonCandidate(text: string) {
   const cleaned = stripJsonFence(text);
 
-  const firstBrace = cleaned.indexOf('{');
-  const lastBrace = cleaned.lastIndexOf('}');
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
 
   if (firstBrace >= 0 && lastBrace > firstBrace) {
     return cleaned.slice(firstBrace, lastBrace + 1);
@@ -356,12 +525,12 @@ function extractJsonCandidate(text: string) {
 
 function repairCommonJsonIssues(value: string) {
   return value
-    .replace(/^\uFEFF/, '')
+    .replace(/^\uFEFF/, "")
     .replace(/[\u0000-\u001F\u007F]/g, (char) => {
-      if (char === '\n' || char === '\r' || char === '\t') return char;
-      return '';
+      if (char === "\n" || char === "\r" || char === "\t") return char;
+      return "";
     })
-    .replace(/,\s*([}\]])/g, '$1')
+    .replace(/,\s*([}\]])/g, "$1")
     .trim();
 }
 
@@ -391,12 +560,18 @@ function parseJsonFromText(text: string) {
     try {
       return JSON.parse(withoutTrailingCommas);
     } catch {
-      throw new Error(`Gemini retornou JSON inválido. ${getJsonErrorContext(candidate, firstError)}`);
+      throw new Error(
+        `Gemini retornou JSON inválido. ${getJsonErrorContext(candidate, firstError)}`,
+      );
     }
   }
 }
 
-async function parseJsonFromTextWithRepair(rawText: string, ai: GoogleGenAI, model: string) {
+async function parseJsonFromTextWithRepair(
+  rawText: string,
+  ai: GoogleGenAI,
+  model: string,
+) {
   try {
     return {
       json: parseJsonFromText(rawText),
@@ -404,9 +579,11 @@ async function parseJsonFromTextWithRepair(rawText: string, ai: GoogleGenAI, mod
       repairedText: null as string | null,
     };
   } catch (error) {
-    if (!envFlag('IMPORT_ENABLE_JSON_REPAIR', false)) {
+    if (!envFlag("IMPORT_ENABLE_JSON_REPAIR", false)) {
       const invalidJson = extractJsonCandidate(rawText);
-      throw new Error(`Gemini retornou JSON inválido e o reparo está desativado. ${getJsonErrorContext(invalidJson, error)}`);
+      throw new Error(
+        `Gemini retornou JSON inválido e o reparo está desativado. ${getJsonErrorContext(invalidJson, error)}`,
+      );
     }
 
     const invalidJson = extractJsonCandidate(rawText);
@@ -429,19 +606,19 @@ Parser error/context:
 ${context}
 
 Invalid JSON:
-${invalidJson.slice(0, Number(process.env.IMPORT_JSON_REPAIR_MAX_CHARS || '70000'))}
+${invalidJson.slice(0, Number(process.env.IMPORT_JSON_REPAIR_MAX_CHARS || "70000"))}
 `;
 
     const repairResponse = await generateGeminiWithRetry(ai, {
       model: repairModel,
       contents: repairPrompt,
       config: {
-        responseMimeType: 'application/json',
+        responseMimeType: "application/json",
         temperature: 0,
       },
     });
 
-    const repairedText = String((repairResponse as any).text || '');
+    const repairedText = String((repairResponse as any).text || "");
 
     try {
       return {
@@ -461,11 +638,11 @@ ${invalidJson.slice(0, Number(process.env.IMPORT_JSON_REPAIR_MAX_CHARS || '70000
 }
 
 function parseNullableNumber(value: unknown) {
-  if (value === null || value === undefined || value === '') return null;
+  if (value === null || value === undefined || value === "") return null;
 
   const normalized = String(value)
-    .replace(',', '.')
-    .replace(/[^\d.-]/g, '');
+    .replace(",", ".")
+    .replace(/[^\d.-]/g, "");
 
   if (!normalized) return null;
 
@@ -490,24 +667,30 @@ function normalizeDriverGroup(value: string) {
     .map((part) => part.trim())
     .filter(Boolean)
     .sort((a, b) => cleanText(a).localeCompare(cleanText(b)))
-    .join(' / ');
+    .join(" / ");
 }
 
 function isRetryableGeminiError(error: unknown) {
   const message = getErrorMessage(error);
 
   return (
-    message.includes('503') ||
-    message.includes('UNAVAILABLE') ||
-    message.includes('high demand') ||
-    message.includes('temporarily unavailable') ||
-    message.includes('429') ||
-    message.toLowerCase().includes('rate limit')
+    message.includes("503") ||
+    message.includes("UNAVAILABLE") ||
+    message.includes("high demand") ||
+    message.includes("temporarily unavailable") ||
+    message.includes("429") ||
+    message.toLowerCase().includes("rate limit")
   );
 }
 
-async function generateGeminiWithRetry(ai: GoogleGenAI, args: Record<string, unknown>) {
-  const maxAttempts = Math.max(1, Number(process.env.GEMINI_RETRY_ATTEMPTS || '1'));
+async function generateGeminiWithRetry(
+  ai: GoogleGenAI,
+  args: Record<string, unknown>,
+) {
+  const maxAttempts = Math.max(
+    1,
+    Number(process.env.GEMINI_RETRY_ATTEMPTS || "1"),
+  );
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -529,17 +712,18 @@ async function generateGeminiWithRetry(ai: GoogleGenAI, args: Record<string, unk
 
 function envFlag(name: string, defaultValue = false) {
   const value = process.env[name];
-  if (value === undefined || value === null || value === '') return defaultValue;
-  return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+  if (value === undefined || value === null || value === "")
+    return defaultValue;
+  return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
 }
 
 function compactImportEnabled() {
-  return envFlag('IMPORT_COMPACT_MODE', true);
+  return envFlag("IMPORT_COMPACT_MODE", true);
 }
 
 function buildImportTasks(query: string) {
-  const autoExpand = envFlag('IMPORT_AUTO_EXPAND_TASKS', false);
-  const maxTasks = Math.max(1, Number(process.env.IMPORT_MAX_TASKS || '1'));
+  const autoExpand = envFlag("IMPORT_AUTO_EXPAND_TASKS", false);
+  const maxTasks = Math.max(1, Number(process.env.IMPORT_MAX_TASKS || "1"));
 
   if (compactImportEnabled() || !autoExpand || maxTasks === 1) {
     return [query.trim()];
@@ -562,19 +746,21 @@ function buildImportTasks(query: string) {
 
 async function searchTavily(query: string): Promise<SearchEvidence> {
   if (!process.env.TAVILY_API_KEY) {
-    throw new Error('TAVILY_API_KEY vazia. Configure a chave ou use IMPORT_SEARCH_PROVIDER=gemini.');
+    throw new Error(
+      "TAVILY_API_KEY vazia. Configure a chave ou use IMPORT_SEARCH_PROVIDER=gemini.",
+    );
   }
 
-  const response = await fetch('https://api.tavily.com/search', {
-    method: 'POST',
+  const response = await fetch("https://api.tavily.com/search", {
+    method: "POST",
     headers: {
-      'content-type': 'application/json',
+      "content-type": "application/json",
     },
     body: JSON.stringify({
       api_key: process.env.TAVILY_API_KEY,
       query,
-      search_depth: process.env.TAVILY_SEARCH_DEPTH || 'advanced',
-      max_results: Number(process.env.TAVILY_MAX_RESULTS || '20'),
+      search_depth: process.env.TAVILY_SEARCH_DEPTH || "advanced",
+      max_results: Number(process.env.TAVILY_MAX_RESULTS || "20"),
       include_answer: true,
       include_raw_content: true,
     }),
@@ -595,7 +781,7 @@ async function searchTavily(query: string): Promise<SearchEvidence> {
 
   return {
     task: query,
-    provider: 'tavily',
+    provider: "tavily",
     query,
     rawText: JSON.stringify(json).slice(0, 24000),
     rawJson: json,
@@ -605,11 +791,16 @@ async function searchTavily(query: string): Promise<SearchEvidence> {
 
 async function searchGeminiGrounded(query: string): Promise<SearchEvidence> {
   if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY vazia. Configure a chave antes de executar importação real.');
+    throw new Error(
+      "GEMINI_API_KEY vazia. Configure a chave antes de executar importação real.",
+    );
   }
 
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const model = process.env.GEMINI_SEARCH_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const model =
+    process.env.GEMINI_SEARCH_MODEL ||
+    process.env.GEMINI_MODEL ||
+    "gemini-2.5-flash";
 
   const prompt = `
 Search the web with grounding and collect factual motorsport data.
@@ -636,28 +827,33 @@ ${query}
     },
   });
 
-  const rawText = String((response as any).text || '').trim();
+  const rawText = String((response as any).text || "").trim();
   const metadata = (response as any).candidates?.[0]?.groundingMetadata || null;
 
   return {
     task: query,
     provider: `gemini-grounded:${model}`,
     query,
-    rawText: JSON.stringify({ text: rawText, groundingMetadata: metadata }).slice(0, 30000),
+    rawText: JSON.stringify({
+      text: rawText,
+      groundingMetadata: metadata,
+    }).slice(0, 30000),
   };
 }
 
 async function collectEvidence(query: string, force = false) {
-  const provider = process.env.IMPORT_SEARCH_PROVIDER || 'gemini';
+  const provider = process.env.IMPORT_SEARCH_PROVIDER || "gemini";
   const tasks = buildImportTasks(query);
-  const ttl = Number(process.env.IMPORT_CACHE_TTL_SECONDS || '86400');
+  const ttl = Number(process.env.IMPORT_CACHE_TTL_SECONDS || "86400");
   const cacheClient = await cache();
   const evidences: SearchEvidence[] = [];
   const failures: Array<{ task: string; error: string }> = [];
 
   for (const task of tasks) {
     const cacheKey = `import:evidence:${provider}:${stableKey([task])}`;
-    const cached = !force ? await cacheClient.get<SearchEvidence>(cacheKey) : null;
+    const cached = !force
+      ? await cacheClient.get<SearchEvidence>(cacheKey)
+      : null;
 
     if (cached) {
       evidences.push(cached);
@@ -667,13 +863,16 @@ async function collectEvidence(query: string, force = false) {
     try {
       let evidence: SearchEvidence;
 
-      if (provider === 'tavily') {
+      if (provider === "tavily") {
         evidence = await searchTavily(task);
-      } else if (provider === 'hybrid') {
+      } else if (provider === "hybrid") {
         try {
           evidence = await searchGeminiGrounded(task);
         } catch (error) {
-          failures.push({ task, error: `Gemini grounded falhou; tentando Tavily: ${getErrorMessage(error)}` });
+          failures.push({
+            task,
+            error: `Gemini grounded falhou; tentando Tavily: ${getErrorMessage(error)}`,
+          });
           evidence = await searchTavily(task);
         }
       } else {
@@ -688,7 +887,9 @@ async function collectEvidence(query: string, force = false) {
   }
 
   if (evidences.length === 0) {
-    throw new Error(`Nenhuma evidência coletada. Falhas: ${JSON.stringify(failures).slice(0, 1800)}`);
+    throw new Error(
+      `Nenhuma evidência coletada. Falhas: ${JSON.stringify(failures).slice(0, 1800)}`,
+    );
   }
 
   return { evidences, failures, tasks };
@@ -700,23 +901,49 @@ function sanitizeImportPayload(input: any): ImportPayloadType {
   const events = Array.isArray(input?.events)
     ? input.events
         .filter((event: any) => {
-          if (!event?.title || !event?.series || !event?.category || !event?.circuit || !event?.startsAt) return false;
+          if (
+            !event?.title ||
+            !event?.series ||
+            !event?.category ||
+            !event?.circuit ||
+            !event?.startsAt
+          )
+            return false;
 
           const startsAt = safeDate(event.startsAt);
           if (!startsAt || startsAt < minDate) return false;
 
-          const eventKind = event.eventKind || detectEventKind(`${event.title} ${event.series} ${event.category}`, event.sourceUrl);
-          if (eventKind === 'REAL' && hasBlacklistedSessionName(`${event.title} ${event.category} ${event.notes || ''}`)) return false;
+          const eventKind =
+            event.eventKind ||
+            detectEventKind(
+              `${event.title} ${event.series} ${event.category}`,
+              event.sourceUrl,
+            );
+          if (
+            eventKind === "REAL" &&
+            hasBlacklistedSessionName(
+              `${event.title} ${event.category} ${event.notes || ""}`,
+            )
+          )
+            return false;
 
           return true;
         })
         .map((event: any) => {
-          const eventKind = event.eventKind || detectEventKind(`${event.title} ${event.series} ${event.category}`, event.sourceUrl);
+          const eventKind =
+            event.eventKind ||
+            detectEventKind(
+              `${event.title} ${event.series} ${event.category}`,
+              event.sourceUrl,
+            );
           return {
             title: String(event.title).trim(),
             series: String(event.series).trim(),
-            category: canonicalCategory(String(event.category || ''), String(event.series || '')),
-            eventKind: eventKind === 'ESPORT' ? 'ESPORT' : 'REAL',
+            category: canonicalCategory(
+              String(event.category || ""),
+              String(event.series || ""),
+            ),
+            eventKind: eventKind === "ESPORT" ? "ESPORT" : "REAL",
             circuit: String(event.circuit).trim(),
             country: event.country ? String(event.country).trim() : null,
             startsAt: String(event.startsAt).trim(),
@@ -733,50 +960,79 @@ function sanitizeImportPayload(input: any): ImportPayloadType {
   const standings = Array.isArray(input?.standings)
     ? input.standings
         .filter((standing: any) => {
-          if (!standing?.driver || !standing?.series || !standing?.category) return false;
+          if (!standing?.driver || !standing?.series || !standing?.category)
+            return false;
           const category = cleanText(standing.category);
-          if (/constructor|manufacturer|team standings|teams championship|fabricante|construtor/.test(category)) return false;
+          if (
+            /constructor|manufacturer|team standings|teams championship|fabricante|construtor/.test(
+              category,
+            )
+          )
+            return false;
 
           return true;
         })
         .map((standing: any, index: number) => {
-          const kind = standing.kind === 'STANDINGS' ? 'STANDINGS' : 'ENTRY_LIST';
-          const eventKind = standing.eventKind || detectEventKind(`${standing.eventTitle || ''} ${standing.series} ${standing.category}`, standing.sourceUrl);
+          const kind =
+            standing.kind === "STANDINGS" ? "STANDINGS" : "ENTRY_LIST";
+          const eventKind =
+            standing.eventKind ||
+            detectEventKind(
+              `${standing.eventTitle || ""} ${standing.series} ${standing.category}`,
+              standing.sourceUrl,
+            );
           return {
-            eventTitle: standing.eventTitle ? String(standing.eventTitle).trim() : null,
-            eventCircuit: standing.eventCircuit ? String(standing.eventCircuit).trim() : null,
-            eventDate: standing.eventDate ? String(standing.eventDate).trim() : null,
+            eventTitle: standing.eventTitle
+              ? String(standing.eventTitle).trim()
+              : null,
+            eventCircuit: standing.eventCircuit
+              ? String(standing.eventCircuit).trim()
+              : null,
+            eventDate: standing.eventDate
+              ? String(standing.eventDate).trim()
+              : null,
             series: String(standing.series).trim(),
-            category: canonicalCategory(String(standing.category || ''), String(standing.series || '')),
+            category: canonicalCategory(
+              String(standing.category || ""),
+              String(standing.series || ""),
+            ),
             kind,
-            eventKind: eventKind === 'ESPORT' ? 'ESPORT' : 'REAL',
+            eventKind: eventKind === "ESPORT" ? "ESPORT" : "REAL",
             position: parsePositivePosition(standing.position, index + 1),
-            carNumber: standing.carNumber ? String(standing.carNumber).replace(/^#/, '').trim() : null,
+            carNumber: standing.carNumber
+              ? String(standing.carNumber).replace(/^#/, "").trim()
+              : null,
             driver: normalizeDriverGroup(String(standing.driver).trim()),
             team: standing.team ? String(standing.team).trim() : null,
             car: standing.car ? String(standing.car).trim() : null,
             points: null,
             gap: null,
-            sourceUrl: standing.sourceUrl ? String(standing.sourceUrl).trim() : null,
+            sourceUrl: standing.sourceUrl
+              ? String(standing.sourceUrl).trim()
+              : null,
           } satisfies StandingInputType;
         })
     : [];
 
   return {
-    summary: input?.summary ? String(input.summary).trim() : '',
+    summary: input?.summary ? String(input.summary).trim() : "",
     events,
     standings,
   };
 }
 
-
 async function importCompactWithGemini(query: string) {
   if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY vazia. Configure a chave antes de executar importação real.');
+    throw new Error(
+      "GEMINI_API_KEY vazia. Configure a chave antes de executar importação real.",
+    );
   }
 
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const model = process.env.GEMINI_SEARCH_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+  const model =
+    process.env.GEMINI_SEARCH_MODEL ||
+    process.env.GEMINI_MODEL ||
+    "gemini-2.5-flash-lite";
   const minDate = getMinImportDate().toISOString().slice(0, 10);
   const year = process.env.IMPORT_YEAR || String(new Date().getUTCFullYear());
 
@@ -863,13 +1119,19 @@ Required JSON shape:
     },
   });
 
-  const rawText = String((response as any).text || '');
-  const parsedJsonResult = await parseJsonFromTextWithRepair(rawText, ai, model);
+  const rawText = String((response as any).text || "");
+  const parsedJsonResult = await parseJsonFromTextWithRepair(
+    rawText,
+    ai,
+    model,
+  );
   const sanitized = sanitizeImportPayload(parsedJsonResult.json);
   const parsed = ImportPayload.parse(sanitized);
 
   if (!(parsed.events.length > 0) && !(parsed.standings.length > 0)) {
-    throw new Error('Gemini não retornou eventos ou entry lists validáveis no modo compacto. Nada foi salvo.');
+    throw new Error(
+      "Gemini não retornou eventos ou entry lists validáveis no modo compacto. Nada foi salvo.",
+    );
   }
 
   return {
@@ -881,19 +1143,30 @@ Required JSON shape:
   };
 }
 
-async function normalizeEvidenceWithGemini(evidences: SearchEvidence[], query: string) {
+async function normalizeEvidenceWithGemini(
+  evidences: SearchEvidence[],
+  query: string,
+) {
   if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY vazia. Configure a chave antes de executar importação real.');
+    throw new Error(
+      "GEMINI_API_KEY vazia. Configure a chave antes de executar importação real.",
+    );
   }
 
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const model = process.env.GEMINI_NORMALIZER_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const model =
+    process.env.GEMINI_NORMALIZER_MODEL ||
+    process.env.GEMINI_MODEL ||
+    "gemini-2.5-flash";
   const minDate = getMinImportDate().toISOString().slice(0, 10);
 
   const evidenceText = evidences
-    .map((evidence, index) => `### Evidence ${index + 1}\nProvider: ${evidence.provider}\nTask: ${evidence.task}\n${evidence.rawText}`)
-    .join('\n\n')
-    .slice(0, Number(process.env.IMPORT_EVIDENCE_MAX_CHARS || '90000'));
+    .map(
+      (evidence, index) =>
+        `### Evidence ${index + 1}\nProvider: ${evidence.provider}\nTask: ${evidence.task}\n${evidence.rawText}`,
+    )
+    .join("\n\n")
+    .slice(0, Number(process.env.IMPORT_EVIDENCE_MAX_CHARS || "90000"));
 
   const prompt = `
 You normalize grounded motorsport evidence into strict JSON for a production website.
@@ -973,18 +1246,24 @@ ${evidenceText}
     model,
     contents: prompt,
     config: {
-      responseMimeType: 'application/json',
+      responseMimeType: "application/json",
       temperature: 0,
     },
   });
 
-  const rawText = String((response as any).text || '');
-  const parsedJsonResult = await parseJsonFromTextWithRepair(rawText, ai, model);
+  const rawText = String((response as any).text || "");
+  const parsedJsonResult = await parseJsonFromTextWithRepair(
+    rawText,
+    ai,
+    model,
+  );
   const sanitized = sanitizeImportPayload(parsedJsonResult.json);
   const parsed = ImportPayload.parse(sanitized);
 
   if (!(parsed.events.length > 0) && !(parsed.standings.length > 0)) {
-    throw new Error('Gemini não retornou eventos ou entry lists validáveis com as evidências coletadas. Nada foi salvo.');
+    throw new Error(
+      "Gemini não retornou eventos ou entry lists validáveis com as evidências coletadas. Nada foi salvo.",
+    );
   }
 
   return {
@@ -998,23 +1277,99 @@ ${evidenceText}
 
 function eventSourceKey(event: EventInputType) {
   const startsAt = safeDate(event.startsAt);
-  return stableKey(canonicalEventIdentity({
-    eventKind: event.eventKind,
-    title: event.title,
-    circuit: event.circuit,
-    startsAt,
-    series: event.series,
-  }));
+  return stableKey(
+    canonicalEventIdentity({
+      eventKind: event.eventKind,
+      title: event.title,
+      circuit: event.circuit,
+      startsAt,
+      series: event.series,
+    }),
+  );
+}
+
+function daysBetween(a: Date | null | undefined, b: Date | null | undefined) {
+  if (!a || !b) return Number.POSITIVE_INFINITY;
+  return Math.abs(a.getTime() - b.getTime()) / (1000 * 60 * 60 * 24);
+}
+
+function eventsAreCompatible(existing: any, incoming: EventInputType) {
+  const incomingDate = safeDate(incoming.startsAt);
+  const existingDate = safeDate(
+    existing.startsAt?.toISOString
+      ? existing.startsAt.toISOString()
+      : String(existing.startsAt),
+  );
+  const sameKind = existing.eventKind === incoming.eventKind;
+  const sameCircuit =
+    canonicalCircuit(existing.circuit || "") ===
+    canonicalCircuit(incoming.circuit || "");
+  const sameTitle =
+    canonicalEventTitle(existing.title || "", existing.circuit || "") ===
+    canonicalEventTitle(incoming.title || "", incoming.circuit || "");
+  const sameYear =
+    existingDate && incomingDate
+      ? existingDate.getUTCFullYear() === incomingDate.getUTCFullYear()
+      : true;
+  const dateDistance = daysBetween(existingDate, incomingDate);
+  const major =
+    isMajorEnduranceEvent(incoming.title, incoming.circuit) ||
+    isMajorEnduranceEvent(existing.title || "", existing.circuit || "");
+
+  if (!sameKind || !sameCircuit || !sameTitle || !sameYear) return false;
+
+  if (major) return dateDistance <= 7;
+
+  const sameSeries =
+    canonicalSeriesGroup(existing.series || "") ===
+    canonicalSeriesGroup(incoming.series || "");
+  const sameDuration =
+    extractDurationToken(
+      `${existing.title || ""} ${existing.circuit || ""}`,
+    ) === extractDurationToken(`${incoming.title} ${incoming.circuit}`);
+  const sameStructural =
+    structuralEventToken(existing.title || "") ===
+    structuralEventToken(incoming.title);
+
+  return sameSeries && sameDuration && sameStructural && dateDistance <= 2;
+}
+
+async function findCompatibleExistingEvent(incoming: EventInputType) {
+  const startsAt = safeDate(incoming.startsAt);
+  const year =
+    startsAt?.getUTCFullYear() ||
+    Number(process.env.IMPORT_YEAR || new Date().getUTCFullYear());
+  const circuit = canonicalCircuit(incoming.circuit);
+
+  const candidates = await prisma.event.findMany({
+    where: {
+      eventKind: incoming.eventKind as any,
+      startsAt: {
+        gte: new Date(Date.UTC(year, 0, 1)),
+        lt: new Date(Date.UTC(year + 1, 0, 1)),
+      },
+    },
+    take: 500,
+  });
+
+  return (
+    candidates.find(
+      (event) =>
+        canonicalCircuit(event.circuit) === circuit &&
+        eventsAreCompatible(event, incoming),
+    ) || null
+  );
 }
 
 async function findRelatedEvent(standing: StandingInputType) {
-  if (!standing.eventTitle && !standing.eventCircuit && !standing.eventDate) return null;
+  if (!standing.eventTitle && !standing.eventCircuit && !standing.eventDate)
+    return null;
 
   const eventDate = safeDate(standing.eventDate || undefined);
   const identity = canonicalEventIdentity({
     eventKind: standing.eventKind,
     title: standing.eventTitle || standing.series,
-    circuit: standing.eventCircuit || '',
+    circuit: standing.eventCircuit || "",
     startsAt: eventDate,
     series: standing.series,
   });
@@ -1024,10 +1379,15 @@ async function findRelatedEvent(standing: StandingInputType) {
   if (direct) return direct;
 
   if (standing.eventTitle || standing.eventCircuit) {
-    const year = eventDate?.getUTCFullYear() || Number(process.env.IMPORT_YEAR || new Date().getUTCFullYear());
-    const canonicalTitle = canonicalEventTitle(standing.eventTitle || '');
-    const canonicalCircuitKey = canonicalCircuit(standing.eventCircuit || '');
-    const seriesGroup = canonicalSeriesGroup(standing.series || '');
+    const year =
+      eventDate?.getUTCFullYear() ||
+      Number(process.env.IMPORT_YEAR || new Date().getUTCFullYear());
+    const canonicalTitle = canonicalEventTitle(
+      standing.eventTitle || "",
+      standing.eventCircuit || "",
+    );
+    const canonicalCircuitKey = canonicalCircuit(standing.eventCircuit || "");
+    const seriesGroup = canonicalSeriesGroup(standing.series || "");
     const candidates = await prisma.event.findMany({
       where: {
         eventKind: standing.eventKind as any,
@@ -1041,13 +1401,23 @@ async function findRelatedEvent(standing: StandingInputType) {
 
     return (
       candidates.find((event) => {
-        const sameTitle = standing.eventTitle ? canonicalEventTitle(event.title) === canonicalTitle : true;
-        const sameCircuit = standing.eventCircuit ? canonicalCircuit(event.circuit) === canonicalCircuitKey : true;
-        const sameSeries = isMajorEnduranceEvent(standing.eventTitle || event.title, standing.eventCircuit || event.circuit)
+        const sameTitle = standing.eventTitle
+          ? canonicalEventTitle(event.title, event.circuit) === canonicalTitle
+          : true;
+        const sameCircuit = standing.eventCircuit
+          ? canonicalCircuit(event.circuit) === canonicalCircuitKey
+          : true;
+        const sameSeries = isMajorEnduranceEvent(
+          standing.eventTitle || event.title,
+          standing.eventCircuit || event.circuit,
+        )
           ? true
-          : canonicalSeriesGroup(event.series || '') === seriesGroup;
+          : canonicalSeriesGroup(event.series || "") === seriesGroup;
         const sameDate = eventDate
-          ? Math.abs(new Date(event.startsAt).getTime() - eventDate.getTime()) <= 1000 * 60 * 60 * 24 * 3
+          ? Math.abs(
+              new Date(event.startsAt).getTime() - eventDate.getTime(),
+            ) <=
+            1000 * 60 * 60 * 24 * 3
           : true;
 
         return sameTitle && sameCircuit && sameSeries && sameDate;
@@ -1058,8 +1428,10 @@ async function findRelatedEvent(standing: StandingInputType) {
   return null;
 }
 
-
-async function ensureRelatedEventFromStanding(standing: StandingInputType, provider: string) {
+async function ensureRelatedEventFromStanding(
+  standing: StandingInputType,
+  provider: string,
+) {
   const existing = await findRelatedEvent(standing);
   if (existing) return { event: existing, created: false, updated: false };
 
@@ -1072,21 +1444,26 @@ async function ensureRelatedEventFromStanding(standing: StandingInputType, provi
     return { event: null, created: false, updated: false };
   }
 
-  if (standing.eventKind === 'REAL' && hasBlacklistedSessionName(`${standing.eventTitle} ${standing.category}`)) {
+  if (
+    standing.eventKind === "REAL" &&
+    hasBlacklistedSessionName(`${standing.eventTitle} ${standing.category}`)
+  ) {
     return { event: null, created: false, updated: false };
   }
 
-  const sourceKey = stableKey(canonicalEventIdentity({
-    eventKind: standing.eventKind,
-    title: standing.eventTitle,
-    circuit: standing.eventCircuit,
-    startsAt,
-    series: standing.series,
-  }));
+  const sourceKey = stableKey(
+    canonicalEventIdentity({
+      eventKind: standing.eventKind,
+      title: displayEventTitle(standing.eventTitle, standing.eventCircuit),
+      circuit: standing.eventCircuit,
+      startsAt,
+      series: standing.series,
+    }),
+  );
 
   const data = {
     sourceKey,
-    title: standing.eventTitle,
+    title: displayEventTitle(standing.eventTitle, standing.eventCircuit),
     series: standing.series,
     category: standing.category,
     eventKind: standing.eventKind as any,
@@ -1095,10 +1472,14 @@ async function ensureRelatedEventFromStanding(standing: StandingInputType, provi
     startsAt,
     endsAt: null,
     priority: 1,
-    hasBrazilian: /(farfus|bortolotti|drudi|brazil|brasil|brasileir)/i.test(`${standing.driver} ${standing.team || ''}`),
-    hasVerstappen: /verstappen/i.test(`${standing.driver} ${standing.team || ''}`),
+    hasBrazilian: /(farfus|bortolotti|drudi|brazil|brasil|brasileir)/i.test(
+      `${standing.driver} ${standing.team || ""}`,
+    ),
+    hasVerstappen: /verstappen/i.test(
+      `${standing.driver} ${standing.team || ""}`,
+    ),
     sourceUrl: standing.sourceUrl || provider,
-    notes: 'Evento criado automaticamente a partir de entry list validada.',
+    notes: "Evento criado automaticamente a partir de entry list validada.",
   };
 
   const created = await prisma.event.upsert({
@@ -1115,9 +1496,107 @@ async function ensureRelatedEventFromStanding(standing: StandingInputType, provi
   return { event: created, created: true, updated: false };
 }
 
+
+function normalizeTeamKey(value: unknown) {
+  const text = cleanText(value);
+
+  return text
+    .replace(/\b(team|racing|motorsport|motorsports|competition|garage|by)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim() || "unknown-team";
+}
+
+function normalizeCarNumberKey(value: unknown) {
+  const text = String(value ?? "").trim();
+  const number = text.match(/[A-Za-z0-9]+/g)?.join("") || "";
+
+  return number ? number.toLowerCase() : "no-car-number";
+}
+
+function driverLineupParts(value: unknown) {
+  return String(value ?? "")
+    .split(/\s*(?:\/|,|;|\+| and | & )\s*/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function driverLineupScore(value: unknown) {
+  const parts = driverLineupParts(value);
+  const text = String(value ?? "").trim();
+
+  return parts.length * 100 + text.length;
+}
+
+function chooseBestLineup(existing: unknown, incoming: unknown) {
+  const existingText = String(existing ?? "").trim();
+  const incomingText = String(incoming ?? "").trim();
+
+  if (!existingText) return incomingText;
+  if (!incomingText) return existingText;
+
+  return driverLineupScore(incomingText) > driverLineupScore(existingText)
+    ? incomingText
+    : existingText;
+}
+
+function entryListIdentityKey(
+  standing: StandingInputType,
+  relatedEventSourceKey?: string | null,
+) {
+  const eventDate = safeDate(standing.eventDate || undefined);
+  const eventKey =
+    relatedEventSourceKey ||
+    stableKey(
+      canonicalEventIdentity({
+        eventKind: standing.eventKind,
+        title: standing.eventTitle || standing.series,
+        circuit: standing.eventCircuit || "",
+        startsAt: eventDate,
+        series: standing.series,
+      }),
+    );
+
+  const teamKey = normalizeTeamKey(standing.team);
+  const carNumberKey = normalizeCarNumberKey(standing.carNumber);
+  const categoryKey = slug(standing.category);
+
+  // Entry list identity must prefer the car entry, not the driver names.
+  // Driver lineups are unstable: sources can return one driver, a duo, trio,
+  // quartet, or the same names in a different order.
+  if (carNumberKey !== "no-car-number" && teamKey !== "unknown-team") {
+    return stableKey([
+      "standing",
+      "entry-list",
+      standing.eventKind,
+      eventKey,
+      categoryKey,
+      teamKey,
+      carNumberKey,
+    ]);
+  }
+
+  // If we do not have a car number, keep the driver group in the key to avoid
+  // merging multiple cars from the same team.
+  return stableKey([
+    "standing",
+    "entry-list",
+    standing.eventKind,
+    eventKey,
+    categoryKey,
+    teamKey,
+    normalizeDriverGroup(standing.driver),
+  ]);
+}
+
 function shouldUpdateEvent(existing: any, incoming: EventInputType) {
-  const existingScore = sourceScore(existing.sourceUrl) + (existing.circuit ? 5 : 0) + (existing.country ? 2 : 0);
-  const incomingScore = sourceScore(incoming.sourceUrl) + (incoming.circuit ? 5 : 0) + (incoming.country ? 2 : 0);
+  const existingScore =
+    sourceScore(existing.sourceUrl) +
+    (existing.circuit ? 5 : 0) +
+    (existing.country ? 2 : 0);
+  const incomingScore =
+    sourceScore(incoming.sourceUrl) +
+    (incoming.circuit ? 5 : 0) +
+    (incoming.country ? 2 : 0);
   return incomingScore >= existingScore;
 }
 
@@ -1132,13 +1611,23 @@ async function persistPayload(payloadUnknown: unknown, provider: string) {
   for (const event of payload.events) {
     const startsAt = safeDate(event.startsAt);
     if (!startsAt || startsAt < getMinImportDate()) continue;
-    if (event.eventKind === 'REAL' && hasBlacklistedSessionName(`${event.title} ${event.category} ${event.notes || ''}`)) continue;
+    if (
+      event.eventKind === "REAL" &&
+      hasBlacklistedSessionName(
+        `${event.title} ${event.category} ${event.notes || ""}`,
+      )
+    )
+      continue;
 
     const sourceKey = eventSourceKey(event);
-    const existing = await prisma.event.findUnique({ where: { sourceKey } });
+    const directExisting = await prisma.event.findUnique({
+      where: { sourceKey },
+    });
+    const existing =
+      directExisting || (await findCompatibleExistingEvent(event));
     const data = {
       sourceKey,
-      title: event.title,
+      title: displayEventTitle(event.title, event.circuit),
       series: event.series,
       category: event.category,
       eventKind: event.eventKind as any,
@@ -1157,12 +1646,13 @@ async function persistPayload(payloadUnknown: unknown, provider: string) {
       await prisma.event.create({ data });
       eventsCreated++;
     } else if (shouldUpdateEvent(existing, event)) {
-      await prisma.event.update({ where: { sourceKey }, data });
+      await prisma.event.update({ where: { id: existing.id }, data });
       eventsUpdated++;
     } else {
       await prisma.event.update({
-        where: { sourceKey },
+        where: { id: existing.id },
         data: {
+          sourceKey,
           hasBrazilian: existing.hasBrazilian || event.hasBrazilian,
           hasVerstappen: existing.hasVerstappen || event.hasVerstappen,
           notes: existing.notes || event.notes || payload.summary || null,
@@ -1174,20 +1664,25 @@ async function persistPayload(payloadUnknown: unknown, provider: string) {
   }
 
   for (const standing of payload.standings) {
-    const relatedEventResult = await ensureRelatedEventFromStanding(standing, provider);
+    const relatedEventResult = await ensureRelatedEventFromStanding(
+      standing,
+      provider,
+    );
     const relatedEvent = relatedEventResult.event;
     if (relatedEventResult.created) eventsCreated++;
     const driverKey = normalizeDriverGroup(standing.driver);
-    const sourceKey = stableKey([
-      'standing',
-      standing.kind,
-      standing.eventKind,
-      standing.series,
-      standing.category,
-      standing.eventTitle ? canonicalEventTitle(standing.eventTitle) : '',
-      driverKey,
-      standing.team,
-    ]);
+    const sourceKey =
+      standing.kind === "ENTRY_LIST"
+        ? entryListIdentityKey(standing, relatedEvent?.sourceKey || null)
+        : stableKey([
+            "standing",
+            standing.kind,
+            standing.eventKind,
+            relatedEvent?.sourceKey || standing.series,
+            standing.category,
+            standing.position,
+            driverKey,
+          ]);
 
     const existing = await prisma.standing.findUnique({ where: { sourceKey } });
     const data = {
@@ -1215,6 +1710,10 @@ async function persistPayload(payloadUnknown: unknown, provider: string) {
         where: { sourceKey },
         data: {
           ...data,
+          driver:
+            standing.kind === "ENTRY_LIST"
+              ? chooseBestLineup(existing.driver, data.driver)
+              : data.driver,
           carNumber: existing.carNumber || data.carNumber,
           car: existing.car || data.car,
           team: existing.team || data.team,
@@ -1235,26 +1734,24 @@ async function persistPayload(payloadUnknown: unknown, provider: string) {
   };
 }
 
-export async function runImport(
-  options?: {
-    force?: boolean;
-    dryRun?: boolean;
-    query?: string;
-  },
-): Promise<ImportDebugResult> {
+export async function runImport(options?: {
+  force?: boolean;
+  dryRun?: boolean;
+  query?: string;
+}): Promise<ImportDebugResult> {
   const query =
     options?.query ||
     process.env.IMPORT_QUERY ||
-    '2026 GT3 and endurance real racing calendar and official entry lists drivers teams cars';
+    "2026 GT3 and endurance real racing calendar and official entry lists drivers teams cars";
 
-  const provider = process.env.IMPORT_SEARCH_PROVIDER || 'gemini';
+  const provider = process.env.IMPORT_SEARCH_PROVIDER || "gemini";
 
   const log = await prisma.importLog.create({
     data: {
-      status: 'FAILED',
+      status: "FAILED",
       provider,
       query,
-      message: 'Importação real iniciada',
+      message: "Importação real iniciada",
     },
   });
 
@@ -1263,14 +1760,14 @@ export async function runImport(
     provider,
     stages: [],
     minDate: getMinImportDate().toISOString(),
-    maxTasks: process.env.IMPORT_MAX_TASKS || '1',
+    maxTasks: process.env.IMPORT_MAX_TASKS || "1",
     compactMode: compactImportEnabled(),
-    autoExpandTasks: envFlag('IMPORT_AUTO_EXPAND_TASKS', false),
-    jsonRepairEnabled: envFlag('IMPORT_ENABLE_JSON_REPAIR', false),
+    autoExpandTasks: envFlag("IMPORT_AUTO_EXPAND_TASKS", false),
+    jsonRepairEnabled: envFlag("IMPORT_ENABLE_JSON_REPAIR", false),
     pointsAndGapDisabled: true,
     searchArchitecture: compactImportEnabled()
-      ? 'compact-grounded-json -> local-validator -> smart-merge'
-      : 'grounded-search -> normalizer -> local-validator -> smart-merge',
+      ? "compact-grounded-json -> local-validator -> smart-merge"
+      : "grounded-search -> normalizer -> local-validator -> smart-merge",
   };
 
   try {
@@ -1278,26 +1775,31 @@ export async function runImport(
     let collected: Awaited<ReturnType<typeof collectEvidence>> | null = null;
 
     if (compactImportEnabled()) {
-      (diagnostics.stages as string[]).push('compact_grounded_json');
+      (diagnostics.stages as string[]).push("compact_grounded_json");
       normalized = await importCompactWithGemini(query);
       diagnostics.tasks = [query];
       diagnostics.evidenceCount = 1;
       diagnostics.evidenceFailures = [];
     } else {
-      (diagnostics.stages as string[]).push('collect_evidence');
+      (diagnostics.stages as string[]).push("collect_evidence");
       collected = await collectEvidence(query, Boolean(options?.force));
       diagnostics.tasks = collected.tasks;
       diagnostics.evidenceCount = collected.evidences.length;
       diagnostics.evidenceFailures = collected.failures;
 
-      (diagnostics.stages as string[]).push('gemini_normalize');
-      normalized = await normalizeEvidenceWithGemini(collected.evidences, query);
+      (diagnostics.stages as string[]).push("gemini_normalize");
+      normalized = await normalizeEvidenceWithGemini(
+        collected.evidences,
+        query,
+      );
     }
 
     diagnostics.normalizedEvents = normalized.json.events.length;
     diagnostics.normalizedEntries = normalized.json.standings.length;
 
-    (diagnostics.stages as string[]).push(options?.dryRun ? 'dry_run_validate' : 'persist');
+    (diagnostics.stages as string[]).push(
+      options?.dryRun ? "dry_run_validate" : "persist",
+    );
     const parsed = ImportPayload.parse(normalized.json);
 
     let eventsCreated = 0;
@@ -1314,13 +1816,13 @@ export async function runImport(
     }
 
     const message = options?.dryRun
-      ? 'Importação validada em dry-run. Nada foi salvo.'
+      ? "Importação validada em dry-run. Nada foi salvo."
       : `Importação concluída com ${provider}. Eventos e entry lists normalizados.`;
 
     await prisma.importLog.update({
       where: { id: log.id },
       data: {
-        status: 'SUCCESS',
+        status: "SUCCESS",
         message,
         llmModel: normalized.model,
         rawSearchJson: (collected || { compactMode: true, query }) as any,
@@ -1337,7 +1839,7 @@ export async function runImport(
     return {
       ok: true,
       logId: log.id,
-      status: 'SUCCESS',
+      status: "SUCCESS",
       message,
       eventsCreated,
       eventsUpdated,
@@ -1351,9 +1853,11 @@ export async function runImport(
     await prisma.importLog.update({
       where: { id: log.id },
       data: {
-        status: 'FAILED',
+        status: "FAILED",
         message: getErrorMessage(error),
-        errorStage: Array.isArray(diagnostics.stages) ? diagnostics.stages.at(-1) : 'unknown',
+        errorStage: Array.isArray(diagnostics.stages)
+          ? diagnostics.stages.at(-1)
+          : "unknown",
         errorDetail: detail,
         finishedAt: new Date(),
       },
@@ -1362,7 +1866,7 @@ export async function runImport(
     return {
       ok: false,
       logId: log.id,
-      status: 'FAILED',
+      status: "FAILED",
       message: getErrorMessage(error),
       eventsCreated: 0,
       eventsUpdated: 0,

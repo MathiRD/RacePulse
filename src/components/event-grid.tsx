@@ -21,11 +21,26 @@ type EventItem = {
   sourceUrl?: string | null;
 };
 
+function groupedCategory(category: string) {
+  const value = category.trim();
+  const upper = value.toUpperCase();
+
+  if (/\bGT3\b/.test(upper) && !/LMGT3|GTD/.test(upper)) {
+    return 'GT3';
+  }
+
+  return value;
+}
+
+function groupedCategories(categories: string[]) {
+  return Array.from(new Set(categories.map(groupedCategory))).sort();
+}
+
 function preferredCategory(categories: string[]) {
   return (
-    categories.find((category) => /GT3/i.test(category)) ||
+    categories.find((category) => category === 'GT3') ||
     categories.find((category) => /Endurance/i.test(category)) ||
-    categories.find((category) => /LMGT3|GTD|SP9/i.test(category)) ||
+    categories.find((category) => /LMGT3|GTD/i.test(category)) ||
     categories[0] ||
     ALL_FILTER_VALUE
   );
@@ -36,7 +51,7 @@ export function EventGrid({ events }: { events: EventItem[] }) {
   const [category, setCategory] = useState('');
 
   const categories = useMemo(
-    () => Array.from(new Set(events.map((event) => event.category).filter(Boolean))).sort(),
+    () => groupedCategories(Array.from(new Set(events.map((event) => event.category).filter(Boolean)))),
     [events],
   );
 
@@ -46,7 +61,7 @@ export function EventGrid({ events }: { events: EventItem[] }) {
     const hay = `${event.title} ${event.series} ${event.category} ${event.circuit} ${event.country} ${event.eventKind}`.toLowerCase();
     return (
       (!q || hay.includes(q.toLowerCase())) &&
-      (selectedCategory === ALL_FILTER_VALUE || !selectedCategory || event.category === selectedCategory)
+      (selectedCategory === ALL_FILTER_VALUE || !selectedCategory || groupedCategory(event.category) === selectedCategory)
     );
   });
 
