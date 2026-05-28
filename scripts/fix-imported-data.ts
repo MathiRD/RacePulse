@@ -112,7 +112,7 @@ async function mergeDuplicateEntryLists() {
   let mergedStandings = 0;
   let normalizedStandings = 0;
 
-  for (const group of groups.values()) {
+  for (const group of Array.from(groups.values())) {
     const sorted = [...group].sort((a, b) => scoreStanding(b) - scoreStanding(a));
     const keeper = sorted[0];
     const duplicates = sorted.slice(1);
@@ -363,7 +363,7 @@ async function main() {
   let deletedEvents = 0;
   let normalizedEvents = 0;
 
-  for (const group of groups.values()) {
+  for (const group of Array.from(groups.values())) {
     const sorted = [...group].sort((a, b) => scoreEvent(b) - scoreEvent(a));
     const keeper = sorted[0];
     const duplicates = sorted.slice(1);
