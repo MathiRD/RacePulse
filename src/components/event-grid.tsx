@@ -54,8 +54,12 @@ function dayStart(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
 
-function isSameDay(a: Date, b: Date) {
-  return dayStart(a) === dayStart(b);
+function isWithinRaceHighlightWindow(eventDate: Date, referenceDate: Date) {
+  const eventDay = dayStart(eventDate);
+  const referenceDay = dayStart(referenceDate);
+  const threeDayWindowEnd = eventDay + 2 * 24 * 60 * 60 * 1000;
+
+  return referenceDay >= eventDay && referenceDay <= threeDayWindowEnd;
 }
 
 function getNextEventIdsByCategory(events: EventItem[]) {
@@ -130,7 +134,7 @@ export function EventGrid({ events }: { events: EventItem[] }) {
           {filtered.map((event) => {
             const isEsport = event.eventKind === 'ESPORT';
             const eventDate = toDate(event.startsAt);
-            const isToday = !Number.isNaN(eventDate.getTime()) && isSameDay(eventDate, new Date());
+            const isToday = !Number.isNaN(eventDate.getTime()) && isWithinRaceHighlightWindow(eventDate, new Date());
             const isNext = !isToday && (selectedCategory === ALL_FILTER_VALUE ? nextEventIdsByCategory.has(event.id) : event.id === nextEventId);
 
             const cardStateClass = isToday
