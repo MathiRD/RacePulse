@@ -1,4 +1,4 @@
-use client';
+'use client';
 
 import { CalendarDays, ExternalLink, Flag, MapPin, Star } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -46,19 +46,50 @@ function preferredCategory(categories: string[]) {
   );
 }
 
-function startOfLocalDay(date: Date) {
+function toDate(value: string | Date) {
+  return value instanceof Date ? value : new Date(value);
+}
+
+function dayStart(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
 
-function isSameLocalDay(a: Date, b: Date) {
-  return startOfLocalDay(a) === startOfLocalDay(b);
+function isSameDay(a: Date, b: Date) {
+  return dayStart(a) === dayStart(b);
+}
+
+function getNextEventIdsByCategory(events: EventItem[]) {
+  const todayStart = dayStart(new Date());
+  const nextByCategory = new Map<string, EventItem>();
+
+  for (const event of events) {
+    const eventDate = toDate(event.startsAt);
+    const eventDay = dayStart(eventDate);
+
+    if (Number.isNaN(eventDate.getTime()) || eventDay <= todayStart) {
+      continue;
+    }
+
+    const key = groupedCategory(event.category || '');
+    const current = nextByCategory.get(key);
+
+    if (!current || eventDate.getTime() < toDate(current.startsAt).getTime()) {
+      nextByCategory.set(key, event);
+    }
+  }
+
+  return new Set(Array.from(nextByCategory.values()).map((event) => event.id));
 }
 
 function getNextEventId(events: EventItem[]) {
-  const now = new Date();
+  const todayStart = dayStart(new Date());
+
   return events
-    .filter((event) => new Date(event.startsAt).getTime() >= now.getTime())
-    .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())[0]?.id;
+    .filter((event) => {
+      const eventDate = toDate(event.startsAt);
+      return !Number.isNaN(eventDate.getTime()) && dayStart(eventDate) > todayStart;
+    })
+    .sort((a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime())[0]?.id;
 }
 
 export function EventGrid({ events }: { events: EventItem[] }) {
@@ -71,15 +102,21 @@ export function EventGrid({ events }: { events: EventItem[] }) {
   );
 
   const selectedCategory = category || preferredCategory(categories);
-  const nextEventId = useMemo(() => getNextEventId(events), [events]);
 
-  const filtered = events.filter((event) => {
-    const hay = `${event.title} ${event.series} ${event.category} ${event.circuit} ${event.country} ${event.eventKind}`.toLowerCase();
-    return (
-      (!q || hay.includes(q.toLowerCase())) &&
-      (selectedCategory === ALL_FILTER_VALUE || !selectedCategory || groupedCategory(event.category) === selectedCategory)
-    );
-  });
+  const filtered = useMemo(
+    () =>
+      events.filter((event) => {
+        const hay = `${event.title} ${event.series} ${event.category} ${event.circuit} ${event.country} ${event.eventKind}`.toLowerCase();
+        return (
+          (!q || hay.includes(q.toLowerCase())) &&
+          (selectedCategory === ALL_FILTER_VALUE || !selectedCategory || groupedCategory(event.category) === selectedCategory)
+        );
+      }),
+    [events, q, selectedCategory],
+  );
+
+  const nextEventId = useMemo(() => getNextEventId(filtered), [filtered]);
+  const nextEventIdsByCategory = useMemo(() => getNextEventIdsByCategory(filtered), [filtered]);
 
   return (
     <>
@@ -92,26 +129,28 @@ export function EventGrid({ events }: { events: EventItem[] }) {
         <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((event) => {
             const isEsport = event.eventKind === 'ESPORT';
-            const eventDate = new Date(event.startsAt);
-            const isToday = isSameLocalDay(eventDate, new Date());
-            const isNext = !isToday && event.id === nextEventId;
+            const eventDate = toDate(event.startsAt);
+            const isToday = !Number.isNaN(eventDate.getTime()) && isSameDay(eventDate, new Date());
+            const isNext = !isToday && (selectedCategory === ALL_FILTER_VALUE ? nextEventIdsByCategory.has(event.id) : event.id === nextEventId);
 
             const cardStateClass = isToday
-              ? 'border border-emerald-300/60 bg-emerald-400/15 shadow-[0_0_35px_rgba(52,211,153,0.18)] light:bg-emerald-100/90'
+              ? 'border-emerald-300/80 bg-gradient-to-br from-emerald-400/28 via-emerald-300/14 to-white/[.08] shadow-[0_0_48px_rgba(52,211,153,0.34)] ring-2 ring-emerald-300/45 light:from-emerald-100 light:via-emerald-50 light:to-white'
               : isNext
-                ? 'border border-sky-300/50 bg-sky-400/10 shadow-[0_0_32px_rgba(56,189,248,0.14)] light:bg-sky-100/80'
+                ? 'border-sky-300/75 bg-gradient-to-br from-sky-400/30 via-cyan-300/12 to-white/[.08] shadow-[0_0_46px_rgba(56,189,248,0.30)] ring-2 ring-sky-300/40 light:from-sky-100 light:via-cyan-50 light:to-white'
                 : isEsport
-                  ? 'border border-fuchsia-400/40 bg-fuchsia-950/30 light:bg-fuchsia-100/80'
+                  ? 'border-fuchsia-400/40 bg-fuchsia-950/30 light:bg-fuchsia-100/80'
                   : '';
 
             return (
               <article
                 key={event.id}
-                className={`glass group min-w-0 overflow-hidden rounded-3xl p-5 transition hover:-translate-y-1 hover:shadow-2xl ${cardStateClass}`}
+                className={`glass group relative min-w-0 overflow-hidden rounded-3xl border p-5 transition hover:-translate-y-1 hover:shadow-2xl ${cardStateClass}`}
               >
+                {isToday && <div className="absolute inset-x-0 top-0 h-1.5 bg-emerald-300/80" />}
+                {isNext && <div className="absolute inset-x-0 top-0 h-1.5 bg-sky-300/80" />}
                 <div className="mb-4 flex min-w-0 items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className={`break-words text-xs uppercase tracking-[.25em] ${isEsport ? 'text-fuchsia-300 light:text-fuchsia-700' : 'text-emerald-300'}`}>
+                    <p className={`break-words text-xs uppercase tracking-[.25em] ${isToday ? 'text-emerald-200' : isNext ? 'text-sky-200' : isEsport ? 'text-fuchsia-300 light:text-fuchsia-700' : 'text-emerald-300'}`}>
                       {isEsport ? 'ESPORT • ' : ''}{event.series}
                     </p>
                     <h3 className="mt-2 break-words text-xl font-bold">{event.title}</h3>
@@ -124,8 +163,8 @@ export function EventGrid({ events }: { events: EventItem[] }) {
                   <p className="flex min-w-0 items-start gap-2"><Flag className="mt-0.5 shrink-0" size={16} /><span className="break-words">{event.category}</span></p>
                 </div>
                 <div className="mt-5 flex min-w-0 flex-wrap gap-2">
-                  {isToday && <span className="pill border-emerald-300/60 bg-emerald-300/20 text-emerald-100 light:text-emerald-800">Hoje</span>}
-                  {isNext && <span className="pill border-sky-300/60 bg-sky-300/20 text-sky-100 light:text-sky-800">Próximo evento</span>}
+                  {isToday && <span className="pill border-emerald-200/80 bg-emerald-300/35 font-bold text-emerald-50 shadow-[0_0_18px_rgba(52,211,153,0.25)] light:text-emerald-900">Hoje</span>}
+                  {isNext && <span className="pill border-sky-200/80 bg-sky-300/35 font-bold text-sky-50 shadow-[0_0_18px_rgba(56,189,248,0.25)] light:text-sky-900">Próxima corrida</span>}
                   {isEsport && <span className="pill border-fuchsia-300/50 bg-fuchsia-400/20 text-fuchsia-100 light:text-fuchsia-800">Virtual / Esport</span>}
                   {event.hasVerstappen && <span className="pill border-violet-400/40 bg-violet-400/15">Verstappen</span>}
                   {event.hasBrazilian && <span className="pill border-yellow-300/40 bg-yellow-300/15">Brasileiro</span>}
