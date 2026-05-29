@@ -134,9 +134,9 @@ export function EventGrid({ events }: { events: EventItem[] }) {
             const isNext = !isToday && (selectedCategory === ALL_FILTER_VALUE ? nextEventIdsByCategory.has(event.id) : event.id === nextEventId);
 
             const cardStateClass = isToday
-              ? 'border-emerald-300/80 bg-gradient-to-br from-emerald-400/28 via-emerald-300/14 to-white/[.08] shadow-[0_0_48px_rgba(52,211,153,0.34)] ring-2 ring-emerald-300/45 light:from-emerald-100 light:via-emerald-50 light:to-white'
+              ? 'border-emerald-300/80 shadow-[0_0_34px_rgba(52,211,153,0.24)] ring-2 ring-emerald-300/35'
               : isNext
-                ? 'border-sky-300/75 bg-gradient-to-br from-sky-400/30 via-cyan-300/12 to-white/[.08] shadow-[0_0_46px_rgba(56,189,248,0.30)] ring-2 ring-sky-300/40 light:from-sky-100 light:via-cyan-50 light:to-white'
+                ? 'border-sky-300/75 shadow-[0_0_34px_rgba(56,189,248,0.22)] ring-2 ring-sky-300/32'
                 : isEsport
                   ? 'border-fuchsia-400/40 bg-fuchsia-950/30 light:bg-fuchsia-100/80'
                   : '';

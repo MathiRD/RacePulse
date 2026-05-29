@@ -38,10 +38,10 @@ export default async function HomePage() {
         <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,.8fr)]">
           <div className="glass min-w-0 overflow-hidden rounded-[2rem] p-5 sm:p-8 md:p-10">
             <p className="mb-4 inline-flex max-w-full flex-wrap rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-xs text-emerald-200 light:text-emerald-700 sm:text-sm">
-              GT3 • Endurance • Dados reais via busca web
+              GT3 • Endurance • F1 • Dados reais via busca web
             </p>
             <h1 className="max-w-4xl break-words text-3xl font-black tracking-tight sm:text-4xl md:text-6xl">
-              Calendário inteligente para acompanhar endurance.
+              Calendário inteligente para fãs de Motorsport.
             </h1>
             <p className="mt-5 max-w-2xl break-words text-base leading-relaxed text-slate-300 light:text-slate-700 sm:text-lg">
               Importação com Gemini Grounded Search + normalizador, cache Redis, persistência PostgreSQL e painel de diagnóstico para validar fonte, JSON e erros.

@@ -44,7 +44,7 @@ export default async function AdminPage({ searchParams }: { searchParams: { log?
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-sm uppercase tracking-[.25em] text-emerald-300">Admin</p>
-            <h1 className="text-4xl font-black">Painel Race Pulse</h1>
+            <h1 className="text-4xl font-black">Painel de Administração</h1>
             <p className="mt-2 max-w-2xl text-sm text-slate-400">
               Divirta-se e não abuse! cuidado com o uso dos tokens de ambos os serviços!
             </p>
@@ -73,7 +73,7 @@ export default async function AdminPage({ searchParams }: { searchParams: { log?
           </form>
 
           <form action={clearData} className="glass rounded-[2rem] p-6">
-            <h2 className="text-xl font-bold text-red-200">Limpeza de teste</h2>
+            <h2 className="text-xl font-bold text-red-200">Limpeza de Dados</h2>
             <p className="mt-2 text-sm text-slate-400">
               Apaga eventos, classificações e logs.
             </p>
