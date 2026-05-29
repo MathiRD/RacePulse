@@ -22,11 +22,19 @@ function groupedCategory(category: string) {
   const value = category.trim();
   const upper = value.toUpperCase();
 
+  if (/FORMULA 1|\bF1\b/.test(upper)) {
+    return 'Formula 1';
+  }
+
   if (/\bGT3\b/.test(upper) && !/LMGT3|GTD/.test(upper)) {
     return 'GT3';
   }
 
   return value;
+}
+
+function isFormulaCategory(category: string) {
+  return groupedCategory(category) === 'Formula 1';
 }
 
 function groupedCategories(categories: string[]) {
@@ -36,6 +44,7 @@ function groupedCategories(categories: string[]) {
 function preferredCategory(categories: string[]) {
   return (
     categories.find((category) => category === 'GT3') ||
+    categories.find((category) => category === 'Formula 1') ||
     categories.find((category) => /Endurance/i.test(category)) ||
     categories.find((category) => /LMGT3|GTD/i.test(category)) ||
     categories[0] ||
@@ -53,13 +62,25 @@ export function StandingsTable({ standings }: { standings: Standing[] }) {
   );
   const selectedCategory = category || preferredCategory(categories);
 
-  const filtered = standings.filter(
-    (standing) =>
-      `${standing.series} ${standing.category} ${standing.driver} ${standing.team} ${standing.car} ${standing.carNumber}`
-        .toLowerCase()
-        .includes(q.toLowerCase()) &&
-      (selectedCategory === ALL_FILTER_VALUE || !selectedCategory || groupedCategory(standing.category) === selectedCategory),
-  );
+  const showFormulaPoints = selectedCategory === 'Formula 1';
+
+  const filtered = standings
+    .filter(
+      (standing) =>
+        `${standing.series} ${standing.category} ${standing.driver} ${standing.team} ${standing.car} ${standing.carNumber}`
+          .toLowerCase()
+          .includes(q.toLowerCase()) &&
+        (selectedCategory === ALL_FILTER_VALUE || !selectedCategory || groupedCategory(standing.category) === selectedCategory),
+    )
+    .sort((a, b) => {
+      if (!showFormulaPoints) return 0;
+
+      const pointsA = typeof a.points === 'number' ? a.points : -1;
+      const pointsB = typeof b.points === 'number' ? b.points : -1;
+
+      if (pointsB !== pointsA) return pointsB - pointsA;
+      return a.driver.localeCompare(b.driver);
+    });
 
   return (
     <>
@@ -88,6 +109,7 @@ export function StandingsTable({ standings }: { standings: Standing[] }) {
                   <th className="min-w-[210px] px-5 py-4">Série</th>
                   <th className="w-[170px] min-w-[170px] whitespace-nowrap break-normal px-5 py-4" style={{ whiteSpace: 'nowrap', minWidth: 170 }}>Categoria</th>
                   <th className="min-w-[180px] px-5 py-4">Carro</th>
+                  {showFormulaPoints && <th className="w-[110px] px-5 py-4 text-right">Pts</th>}
                 </tr>
               </thead>
               <tbody>
@@ -112,6 +134,7 @@ export function StandingsTable({ standings }: { standings: Standing[] }) {
                       <td className="min-w-[210px] px-5 py-4">{standing.series}</td>
                       <td className="w-[170px] min-w-[170px] whitespace-nowrap break-normal px-5 py-4" style={{ whiteSpace: 'nowrap', minWidth: 170 }}>{standing.category}</td>
                       <td className="min-w-[180px] px-5 py-4">{standing.car || '-'}</td>
+                      {showFormulaPoints && <td className="px-5 py-4 text-right font-bold text-emerald-300">{isFormulaCategory(standing.category) && typeof standing.points === 'number' ? standing.points : '-'}</td>}
                     </tr>
                   );
                 })}

@@ -452,6 +452,8 @@ function canonicalEventIdentity({
 function canonicalCategory(value: string, series = "") {
   const text = cleanText(`${series} ${value}`);
 
+  if (/formula 1|\bf1\b/.test(text)) return "Formula 1";
+
   if (/lmgt3/.test(text)) return "LMGT3";
   if (/gtd pro/.test(text)) return "GTD Pro";
   if (/gtd/.test(text)) return "GTD";
@@ -635,6 +637,11 @@ ${invalidJson.slice(0, Number(process.env.IMPORT_JSON_REPAIR_MAX_CHARS || "70000
       );
     }
   }
+}
+
+function isFormulaCategory(category = "", series = "") {
+  const text = cleanText(`${series} ${category}`);
+  return /formula 1|\bf1\b/.test(text);
 }
 
 function parseNullableNumber(value: unknown) {
@@ -1005,7 +1012,9 @@ function sanitizeImportPayload(input: any): ImportPayloadType {
             driver: normalizeDriverGroup(String(standing.driver).trim()),
             team: standing.team ? String(standing.team).trim() : null,
             car: standing.car ? String(standing.car).trim() : null,
-            points: null,
+            points: isFormulaCategory(String(standing.category || ""), String(standing.series || ""))
+              ? parseNullableNumber(standing.points)
+              : null,
             gap: null,
             sourceUrl: standing.sourceUrl
               ? String(standing.sourceUrl).trim()
@@ -1060,9 +1069,9 @@ Hard rules:
 - For drivers/teams/cars, return as standings with kind:"ENTRY_LIST".
 - carNumber is the car number, not a race position.
 - position is only display order for ENTRY_LIST when no real result exists.
-- For now, always set points:null and gap:null.
-- Do not mix Formula 1, Stock Car, NASCAR or unrelated categories unless the driver/team is explicitly listed in a GT3/endurance entry list.
-- Keep category standardized: GT3, GT3 Endurance, GT3 Sprint, LMGT3, GTD, GTD Pro, SP9 GT3, Endurance.
+- For Formula 1 driver standings/entry data only, include points when available. For all other categories set points:null and gap:null.
+- Do not mix Stock Car, NASCAR or unrelated categories. Return Formula 1 only when the user query explicitly asks Formula 1/F1.
+- Keep category standardized: GT3, GT3 Endurance, GT3 Sprint, LMGT3, GTD, GTD Pro, SP9 GT3, Endurance, Formula 1.
 - If an entry list has eventTitle + eventCircuit + eventDate, include all three so the system can create/link the parent event.
 - For major races such as Spa 24h, Nürburgring 24h, Le Mans 24h, Daytona 24h, Sebring 12h, Bathurst 12h, Dubai 24H and Petit Le Mans, always prefer the official main race event date.
 
@@ -1073,7 +1082,7 @@ Required JSON shape:
     {
       "title": "official event name",
       "series": "official series name",
-      "category": "GT3 | GT3 Endurance | GT3 Sprint | LMGT3 | GTD | GTD Pro | SP9 GT3 | Endurance",
+      "category": "GT3 | GT3 Endurance | GT3 Sprint | LMGT3 | GTD | GTD Pro | SP9 GT3 | Endurance | Formula 1",
       "eventKind": "REAL or ESPORT",
       "circuit": "official circuit name",
       "country": "country or null",
@@ -1100,7 +1109,7 @@ Required JSON shape:
       "driver": "driver names separated by /",
       "team": "team or null",
       "car": "car model or null",
-      "points": null,
+      "points": 0,
       "gap": null,
       "sourceUrl": "source URL or null"
     }
@@ -1185,13 +1194,13 @@ Hard rules:
 - Events must be main race events. Never use trial, test day, testing, prologue, practice, media day, qualifying, warm-up or pre-event dates as race dates.
 - If a page contains both test/prologue dates and the real race date, return only the real race event date.
 - Separate esports/virtual events using eventKind: "ESPORT". Real racing must use eventKind: "REAL".
-- For standings for now, ignore championship points and gaps. Set points:null and gap:null.
+- For Formula 1 only, include driver points when available. For all other categories, ignore championship points and gaps. Set points:null and gap:null.
 - Use standings mainly as ENTRY_LIST for drivers/teams/cars.
 - carNumber is the car number, not position.
 - position is only display order for ENTRY_LIST if no real result is present.
-- Do not return Formula 1 drivers unless the evidence clearly says they are in GT3/endurance entry list.
-- Do not mix Stock Car, F1, NASCAR or unrelated categories.
-- Normalize categories: GT3, GT3 Endurance, GT3 Sprint, LMGT3, GTD, GTD Pro, SP9 GT3, Endurance.
+- Return Formula 1 drivers only when the user query explicitly asks Formula 1/F1.
+- Do not mix Stock Car, NASCAR or unrelated categories.
+- Normalize categories: GT3, GT3 Endurance, GT3 Sprint, LMGT3, GTD, GTD Pro, SP9 GT3, Endurance, Formula 1.
 - For Spa 24 Hours, the real event is not Spa test days, not prologue and not a trial.
 
 Required JSON shape:
@@ -1201,7 +1210,7 @@ Required JSON shape:
     {
       "title": "official event name",
       "series": "official series name",
-      "category": "GT3 | GT3 Endurance | GT3 Sprint | LMGT3 | GTD | GTD Pro | SP9 GT3 | Endurance",
+      "category": "GT3 | GT3 Endurance | GT3 Sprint | LMGT3 | GTD | GTD Pro | SP9 GT3 | Endurance | Formula 1",
       "eventKind": "REAL or ESPORT",
       "circuit": "official circuit name",
       "country": "country or null",
@@ -1228,7 +1237,7 @@ Required JSON shape:
       "driver": "driver, duo or trio names separated by /",
       "team": "team or null",
       "car": "car model or null",
-      "points": null,
+      "points": 0,
       "gap": null,
       "sourceUrl": "source URL or null"
     }
@@ -1697,7 +1706,7 @@ async function persistPayload(payloadUnknown: unknown, provider: string) {
       driver: driverKey,
       team: standing.team || null,
       car: standing.car || null,
-      points: null,
+      points: isFormulaCategory(standing.category, standing.series) ? standing.points ?? null : null,
       gap: null,
       sourceUrl: standing.sourceUrl || provider,
     };
@@ -1718,6 +1727,9 @@ async function persistPayload(payloadUnknown: unknown, provider: string) {
           car: existing.car || data.car,
           team: existing.team || data.team,
           eventId: existing.eventId || data.eventId,
+          points: isFormulaCategory(data.category, data.series)
+            ? (typeof data.points === "number" ? data.points : existing.points)
+            : null,
           sourceUrl: existing.sourceUrl || data.sourceUrl,
         },
       });

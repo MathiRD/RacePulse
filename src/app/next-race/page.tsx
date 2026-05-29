@@ -1,5 +1,25 @@
 export const dynamic = 'force-dynamic';
 
 import { Nav } from '@/components/nav';
+import { NextRaceView } from '@/components/next-race-view';
 import { prisma } from '@/lib/prisma';
-export default async function NextRacePage(){ const event = await prisma.event.findFirst({ where:{ startsAt:{ gte: new Date()}}, orderBy:{ startsAt:'asc'}}); return <main className="min-h-screen px-4 py-4"><Nav/><section className="mx-auto max-w-4xl glass rounded-[2rem] p-8"> <p className="text-sm uppercase tracking-[.25em] text-emerald-300">Próxima corrida</p>{event ? <><h1 className="mt-4 text-5xl font-black">{event.title}</h1><div className="mt-8 grid gap-4 md:grid-cols-2"><div className="glass rounded-3xl p-5"><b>Data</b><p>{event.startsAt.toLocaleString('pt-BR')}</p></div><div className="glass rounded-3xl p-5"><b>Categoria</b><p>{event.category}</p></div><div className="glass rounded-3xl p-5"><b>Série</b><p>{event.series}</p></div><div className="glass rounded-3xl p-5"><b>Circuito</b><p>{event.circuit}</p></div></div><p className="mt-6 text-slate-300 light:text-slate-700">{event.notes}</p></> : <h1 className="mt-4 text-3xl font-bold">Nenhuma próxima corrida cadastrada.</h1>}</section></main>}
+
+export default async function NextRacePage() {
+  const events = await prisma.event.findMany({
+    where: { startsAt: { gte: new Date() } },
+    orderBy: { startsAt: 'asc' },
+  });
+
+  const serializedEvents = events.map((event) => ({
+    ...event,
+    startsAt: event.startsAt.toISOString(),
+    endsAt: event.endsAt ? event.endsAt.toISOString() : null,
+  }));
+
+  return (
+    <main className="min-h-screen px-4 py-4">
+      <Nav />
+      <NextRaceView events={serializedEvents} />
+    </main>
+  );
+}

@@ -14,72 +14,222 @@ function cleanText(value: unknown) {
 }
 
 function slug(value: unknown) {
-  return cleanText(value).replace(/\s+/g, "-");
+  return cleanText(value).replace(/\s+/g, "-") || "unknown";
 }
 
+function stableKey(value: unknown) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function isFormulaOne(value: unknown) {
+  const text = cleanText(value);
+  return /\b(formula 1|formula one|f1)\b/.test(text);
+}
+
+function normalizeSeries(value: unknown) {
+  const text = cleanText(value);
+  if (isFormulaOne(text)) return "formula-1";
+  if (/gt world challenge/.test(text)) return "gt-world-challenge";
+  if (/intercontinental gt challenge|igtc/.test(text)) return "intercontinental-gt-challenge";
+  if (/fia world endurance|\bwec\b/.test(text)) return "fia-wec";
+  if (/imsa/.test(text)) return "imsa";
+  return slug(text);
+}
+
+function normalizeCategory(value: unknown) {
+  const text = cleanText(value);
+  if (isFormulaOne(text)) return "formula-1";
+  if (/\bsp9\b/.test(text) && /\bgt3\b/.test(text)) return "sp9-gt3";
+  if (/\blmgt3\b/.test(text)) return "lmgt3";
+  if (/\bgtd\b/.test(text)) return text.includes("pro") ? "gtd-pro" : "gtd";
+  if (/\bgt3\b/.test(text)) return "gt3";
+  return slug(text);
+}
 
 function normalizeTeamKey(value: unknown) {
-  const text = cleanText(value);
+  let text = cleanText(value);
 
-  return text
-    .replace(/\b(team|racing|motorsport|motorsports|competition|garage|by)\b/g, " ")
+  const aliases: Array<[RegExp, string]> = [
+    [/\boracle red bull racing\b|\bred bull racing\b|\bred bull\b/g, "red bull"],
+    [/\bvisa cash app rb formula one team\b|\bvisa cash app racing bulls f1 team\b|\bracing bulls\b|\bvcarb\b/g, "racing bulls"],
+    [/\bmercedes amg petronas formula one team\b|\bmercedes amg petronas\b|\bmercedes\b/g, "mercedes"],
+    [/\bscuderia ferrari hp\b|\bscuderia ferrari\b|\bferrari\b/g, "ferrari"],
+    [/\bmclaren formula 1 team\b|\bmclaren\b/g, "mclaren"],
+    [/\baston martin aramco formula one team\b|\baston martin\b/g, "aston martin"],
+    [/\balpine f1 team\b|\balpine\b/g, "alpine"],
+    [/\bwilliams racing\b|\bwilliams\b/g, "williams"],
+    [/\bstake f1 team kick sauber\b|\bkick sauber\b|\bsauber\b/g, "sauber"],
+    [/\bhaas f1 team\b|\bhaas\b/g, "haas"],
+  ];
+
+  for (const [pattern, replacement] of aliases) {
+    text = text.replace(pattern, replacement);
+  }
+
+  text = text
+    .replace(/\b(team|racing|motorsport|motorsports|competition|garage|scuderia|formula one|formula 1|f1|by)\b/g, " ")
     .replace(/\s+/g, " ")
-    .trim() || "unknown-team";
+    .trim();
+
+  return text || "unknown-team";
 }
 
 function normalizeCarNumberKey(value: unknown) {
   const text = String(value ?? "").trim();
   const number = text.match(/[A-Za-z0-9]+/g)?.join("") || "";
-
   return number ? number.toLowerCase() : "no-car-number";
 }
 
-function normalizeDriverGroup(value: unknown) {
-  return String(value ?? "")
-    .split(/\s*(?:\/|,|;|\+| and | & )\s*/i)
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .sort((a, b) => cleanText(a).localeCompare(cleanText(b)))
-    .join(" / ");
-}
-
-function driverLineupParts(value: unknown) {
+function splitDrivers(value: unknown) {
   return String(value ?? "")
     .split(/\s*(?:\/|,|;|\+| and | & )\s*/i)
     .map((part) => part.trim())
     .filter(Boolean);
 }
 
-function driverLineupScore(value: unknown) {
-  const parts = driverLineupParts(value);
-  const text = String(value ?? "").trim();
+function normalizeDriverName(value: unknown) {
+  return cleanText(value)
+    .replace(/\b(driver|piloto)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
+function normalizeDriverGroup(value: unknown) {
+  return splitDrivers(value)
+    .map((driver) => driver.trim())
+    .filter(Boolean)
+    .sort((a, b) => normalizeDriverName(a).localeCompare(normalizeDriverName(b)))
+    .join(" / ");
+}
+
+function driverLineupScore(value: unknown) {
+  const parts = splitDrivers(value);
+  const text = String(value ?? "").trim();
   return parts.length * 100 + text.length;
 }
 
-function standingGroupKey(standing: any) {
-  const teamKey = normalizeTeamKey(standing.team);
-  const carNumberKey = normalizeCarNumberKey(standing.carNumber);
-  const eventKey = standing.eventId || `${cleanText(standing.series)}|no-event`;
-  const categoryKey = slug(standing.category);
+function getEventYear(event: { startsAt?: Date | null } | null | undefined) {
+  return event?.startsAt ? event.startsAt.getUTCFullYear() : process.env.IMPORT_YEAR || "unknown-year";
+}
 
-  if (standing.kind === "ENTRY_LIST" && carNumberKey !== "no-car-number" && teamKey !== "unknown-team") {
+function canonicalEventTitle(value: unknown) {
+  let text = cleanText(value);
+
+  const sponsorWords = [
+    "adac",
+    "ravenol",
+    "crowdstrike",
+    "totalenergies",
+    "total energies",
+    "rolex",
+    "motul",
+    "michelin",
+    "fanatec",
+    "aws",
+    "powered by aws",
+    "liqui moly",
+    "aramco",
+  ];
+
+  for (const word of sponsorWords) {
+    text = text.replace(new RegExp(`\\b${cleanText(word)}\\b`, "g"), " ");
+  }
+
+  text = text
+    .replace(/\b(main race|race event|official|provisional|entry list|calendar|schedule|race week)\b/g, " ")
+    .replace(/\b(round|rd)\s*\d+\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (/nurburgring|nordschleife|24h rennen/.test(text) && /\b24\s*(h|hours?)\b|twenty four/.test(text)) {
+    return "24-hours-of-nurburgring";
+  }
+  if (/spa|francorchamps/.test(text) && /\b24\s*(h|hours?)\b|twenty four/.test(text)) {
+    return "24-hours-of-spa";
+  }
+  if (/le mans/.test(text) && /\b24\s*(h|hours?)\b|twenty four/.test(text)) {
+    return "24-hours-of-le-mans";
+  }
+
+  return slug(text);
+}
+
+function canonicalCircuit(value: unknown) {
+  const text = cleanText(value);
+  if (/nurburgring|nordschleife/.test(text)) return "nurburgring";
+  if (/spa|francorchamps/.test(text)) return "spa-francorchamps";
+  if (/le mans|sarthe/.test(text)) return "circuit-de-la-sarthe";
+  if (/monza/.test(text)) return "monza";
+  if (/paul ricard/.test(text)) return "paul-ricard";
+  if (/daytona/.test(text)) return "daytona";
+  if (/sebring/.test(text)) return "sebring";
+  return slug(text);
+}
+
+function eventGroupKey(event: any) {
+  const startsAt = event.startsAt ? new Date(event.startsAt) : null;
+  const year = startsAt ? startsAt.getUTCFullYear() : process.env.IMPORT_YEAR || "unknown-year";
+  const dateBucket = startsAt ? startsAt.toISOString().slice(0, 10) : "no-date";
+
+  return [
+    "event",
+    event.eventKind || "REAL",
+    year,
+    normalizeSeries(event.series),
+    canonicalEventTitle(event.title),
+    canonicalCircuit(event.circuit),
+    dateBucket,
+  ].join("|");
+}
+
+function standingGroupKey(standing: any) {
+  const categoryKey = normalizeCategory(standing.category);
+  const seriesKey = normalizeSeries(standing.series);
+  const eventKey = standing.eventId || `season:${seriesKey}:${categoryKey}:${process.env.IMPORT_YEAR || "unknown-year"}`;
+
+  if (standing.kind === "ENTRY_LIST") {
+    if (isFormulaOne(`${standing.series} ${standing.category}`)) {
+      // F1 season entry lists often come without a parent event and with team aliases.
+      // A driver should appear once per season/category. Keep the richest record.
+      return [
+        "entry-list",
+        standing.eventKind || "REAL",
+        "formula-1",
+        getEventYear(null),
+        normalizeDriverName(standing.driver),
+      ].join("|");
+    }
+
+    const teamKey = normalizeTeamKey(standing.team);
+    const carNumberKey = normalizeCarNumberKey(standing.carNumber);
+
+    if (carNumberKey !== "no-car-number" && teamKey !== "unknown-team") {
+      return [
+        "entry-list",
+        standing.eventKind || "REAL",
+        eventKey,
+        categoryKey,
+        teamKey,
+        carNumberKey,
+      ].join("|");
+    }
+
     return [
       "entry-list",
-      standing.eventKind,
+      standing.eventKind || "REAL",
       eventKey,
       categoryKey,
       teamKey,
-      carNumberKey,
+      normalizeDriverGroup(standing.driver),
     ].join("|");
   }
 
   return [
     standing.kind,
-    standing.eventKind,
+    standing.eventKind || "REAL",
     eventKey,
     categoryKey,
-    teamKey,
+    standing.position || "no-position",
     normalizeDriverGroup(standing.driver),
   ].join("|");
 }
@@ -93,6 +243,58 @@ function scoreStanding(standing: any) {
     (standing.sourceUrl ? 10 : 0) +
     (standing.eventId ? 10 : 0)
   );
+}
+
+function chooseBest<T>(items: T[], picker: (item: T) => unknown) {
+  return items.map(picker).find((value) => String(value ?? "").trim()) || null;
+}
+
+async function mergeDuplicateEvents() {
+  const events = await prisma.event.findMany({ orderBy: { updatedAt: "desc" } });
+  const groups = new Map<string, typeof events>();
+
+  for (const event of events) {
+    const key = eventGroupKey(event);
+    const list = groups.get(key) || [];
+    list.push(event);
+    groups.set(key, list);
+  }
+
+  let mergedEvents = 0;
+
+  for (const group of Array.from(groups.values())) {
+    if (group.length <= 1) continue;
+
+    const sorted = [...group].sort((a, b) => {
+      const scoreA = (a.sourceUrl ? 10 : 0) + (a.notes ? 5 : 0) + (a.hasVerstappen ? 3 : 0) + (a.hasBrazilian ? 2 : 0);
+      const scoreB = (b.sourceUrl ? 10 : 0) + (b.notes ? 5 : 0) + (b.hasVerstappen ? 3 : 0) + (b.hasBrazilian ? 2 : 0);
+      return scoreB - scoreA;
+    });
+
+    const keeper = sorted[0];
+    const duplicates = sorted.slice(1);
+
+    await prisma.event.update({
+      where: { id: keeper.id },
+      data: {
+        hasBrazilian: group.some((event) => event.hasBrazilian),
+        hasVerstappen: group.some((event) => event.hasVerstappen),
+        sourceUrl: chooseBest(group, (event) => event.sourceUrl) as string | null,
+        notes: chooseBest(group, (event) => event.notes) as string | null,
+      },
+    });
+
+    for (const duplicate of duplicates) {
+      await prisma.standing.updateMany({
+        where: { eventId: duplicate.id },
+        data: { eventId: keeper.id },
+      });
+      await prisma.event.delete({ where: { id: duplicate.id } });
+      mergedEvents++;
+    }
+  }
+
+  return mergedEvents;
 }
 
 async function mergeDuplicateEntryLists() {
@@ -116,7 +318,10 @@ async function mergeDuplicateEntryLists() {
     const sorted = [...group].sort((a, b) => scoreStanding(b) - scoreStanding(a));
     const keeper = sorted[0];
     const duplicates = sorted.slice(1);
-    const bestDriver = sorted.map((item) => item.driver).sort((a, b) => driverLineupScore(b) - driverLineupScore(a))[0];
+
+    const bestDriver = sorted
+      .map((item) => item.driver)
+      .sort((a, b) => driverLineupScore(b) - driverLineupScore(a))[0];
     const bestCar = sorted.find((item) => item.car)?.car || keeper.car;
     const bestTeam = sorted.find((item) => item.team)?.team || keeper.team;
     const bestCarNumber = sorted.find((item) => item.carNumber)?.carNumber || keeper.carNumber;
@@ -147,276 +352,17 @@ async function mergeDuplicateEntryLists() {
   return { mergedStandings, normalizedStandings };
 }
 
-const EVENT_SPONSOR_WORDS = [
-  "adac",
-  "ravenol",
-  "crowdstrike",
-  "totalenergies",
-  "total energies",
-  "rolex",
-  "motul",
-  "michelin",
-  "fanatec",
-  "aws",
-  "powered by aws",
-  "liqui moly",
-  "aramco",
-  "qatar airways",
-  "bapco energies",
-  "imsa michelin",
-];
-
-function stripEventSponsorWords(value: string) {
-  let text = cleanText(value);
-
-  for (const sponsor of EVENT_SPONSOR_WORDS) {
-    const sponsorText = cleanText(sponsor);
-    text = text
-      .replace(new RegExp(`^${sponsorText}\\b\\s*`, "i"), "")
-      .replace(new RegExp(`\\b${sponsorText}\\b`, "gi"), " ");
-  }
-
-  return text
-    .replace(
-      /\b(main race|race event|official|provisional|entry list|calendar|schedule|race week)\b/g,
-      " ",
-    )
-    .replace(/\b(round|rd)\s*\d+\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function extractDurationToken(value: string) {
-  const text = cleanText(value);
-
-  if (/\b24\s*(h|hour|hours|hrs)\b|\btwenty four\b/.test(text)) return "24h";
-  if (/\b12\s*(h|hour|hours|hrs)\b|\btwelve\b/.test(text)) return "12h";
-  if (/\b10\s*(h|hour|hours|hrs)\b|\bten\b/.test(text)) return "10h";
-  if (/\b8\s*(h|hour|hours|hrs)\b|\beight\b/.test(text)) return "8h";
-  if (/\b6\s*(h|hour|hours|hrs)\b|\bsix\b/.test(text)) return "6h";
-  if (/\b4\s*(h|hour|hours|hrs)\b|\bfour\b/.test(text)) return "4h";
-  if (/\b3\s*(h|hour|hours|hrs)\b|\bthree\b/.test(text)) return "3h";
-  if (/\b2\s*(h|hour|hours|hrs)\b|\btwo\b/.test(text)) return "2h";
-
-  return "";
-}
-
-function structuralEventToken(value: string) {
-  const text = cleanText(value);
-  const tokens = [
-    "sprint",
-    "endurance",
-    "summer race",
-    "winter race",
-    "classic",
-    "grand prix",
-    "nls",
-    "qualifiers",
-    "qualifying race",
-    "race of champions",
-    "road race showcase",
-  ];
-
-  return tokens.find((token) => text.includes(token)) || "";
-}
-
-function canonicalCircuit(circuit: string) {
-  const c = cleanText(circuit);
-
-  if (/spa|francorchamps/.test(c)) return "circuit-de-spa-francorchamps";
-  if (/nurburgring|nuerburgring|nordschleife|green hell|24h rennen|n24/.test(c))
-    return "nurburgring-nordschleife";
-  if (/le mans|sarthe/.test(c)) return "circuit-de-la-sarthe";
-  if (/daytona/.test(c)) return "daytona-international-speedway";
-  if (/sebring/.test(c)) return "sebring-international-raceway";
-  if (/bathurst|mount panorama/.test(c)) return "mount-panorama-circuit";
-  if (/paul ricard/.test(c)) return "circuit-paul-ricard";
-  if (/monza/.test(c)) return "autodromo-nazionale-monza";
-  if (/silverstone/.test(c)) return "silverstone-circuit";
-  if (/suzuka/.test(c)) return "suzuka-circuit";
-  if (/interlagos|jose carlos pace|sao paulo/.test(c)) return "interlagos";
-  if (/road america/.test(c)) return "road-america";
-  if (/indianapolis|indy/.test(c)) return "indianapolis-motor-speedway";
-  if (/vir|virginia/.test(c)) return "virginia-international-raceway";
-  if (/watkins glen/.test(c)) return "watkins-glen-international";
-  if (/laguna seca/.test(c)) return "weathertech-raceway-laguna-seca";
-  if (/road atlanta/.test(c)) return "road-atlanta";
-
-  return slug(circuit) || "unknown-circuit";
-}
-
-function canonicalEventTitle(title: string, circuit = "") {
-  const raw = cleanText(`${title} ${circuit}`);
-  const t = stripEventSponsorWords(title);
-  const combined = cleanText(`${t} ${circuit}`);
-  const duration = extractDurationToken(`${title} ${circuit}`);
-
-  if (
-    (duration === "24h" || /\bn24\b|24h rennen|24 h rennen/.test(raw)) &&
-    /(nurburgring|nuerburgring|nordschleife|n24|24h rennen)/.test(combined)
-  )
-    return "24-hours-of-nurburgring";
-  if (duration === "24h" && /(spa|francorchamps)/.test(combined))
-    return "24-hours-of-spa";
-  if (duration === "24h" && /le mans|sarthe/.test(combined))
-    return "24-hours-of-le-mans";
-  if (duration === "24h" && /daytona/.test(combined))
-    return "24-hours-of-daytona";
-  if (duration === "24h" && /dubai/.test(combined)) return "24-hours-of-dubai";
-  if (duration === "12h" && /bathurst|mount panorama/.test(combined))
-    return "bathurst-12-hour";
-  if (duration === "12h" && /sebring/.test(combined))
-    return "12-hours-of-sebring";
-  if (/petit.*le.*mans/.test(combined)) return "petit-le-mans";
-  if (duration === "6h" && /watkins.*glen/.test(combined))
-    return "6-hours-of-watkins-glen";
-
-  const structural = structuralEventToken(t);
-  const hourRace = t.match(
-    /(?:^|\b)(\d{1,2})\s*(?:h|hour|hours|hrs)\b(?:\s+of)?\s+([a-z0-9 ]{3,60})/,
-  );
-  if (hourRace?.[1] && hourRace?.[2]) {
-    const name =
-      slug(hourRace[2].replace(/\brace\b/g, "")) || slug(circuit) || "event";
-    return `${hourRace[1]}-hours-${name}`;
-  }
-
-  const cleaned = t
-    .replace(/\brace\s+at\s+the\b/g, " ")
-    .replace(/\brace\s+at\b/g, " ")
-    .replace(/\bthe\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  return (slug(`${duration} ${structural} ${cleaned}`) || "unknown-event")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
-function displayEventTitle(title: string, circuit = "") {
-  const key = canonicalEventTitle(title, circuit);
-  const titles: Record<string, string> = {
-    "24-hours-of-nurburgring": "24 Hours of Nürburgring",
-    "24-hours-of-spa": "24 Hours of Spa",
-    "24-hours-of-le-mans": "24 Hours of Le Mans",
-    "24-hours-of-daytona": "24 Hours of Daytona",
-    "24-hours-of-dubai": "Dubai 24H",
-    "bathurst-12-hour": "Bathurst 12 Hour",
-    "12-hours-of-sebring": "12 Hours of Sebring",
-    "petit-le-mans": "Petit Le Mans",
-    "6-hours-of-watkins-glen": "6 Hours of Watkins Glen",
-  };
-  return titles[key] || title;
-}
-
-function eventGroupKey(event: any) {
-  const date = event.startsAt ? new Date(event.startsAt) : null;
-  const year =
-    date && !Number.isNaN(date.getTime())
-      ? date.getUTCFullYear()
-      : process.env.IMPORT_YEAR || "unknown-year";
-  const dateBucket =
-    date && !Number.isNaN(date.getTime())
-      ? date.toISOString().slice(0, 10)
-      : "no-date";
-  const major =
-    /^(24-hours-of-spa|24-hours-of-nurburgring|24-hours-of-le-mans|24-hours-of-daytona|24-hours-of-dubai|bathurst-12-hour|12-hours-of-sebring|petit-le-mans|6-hours-of-watkins-glen)$/.test(
-      canonicalEventTitle(event.title, event.circuit),
-    );
-
-  return [
-    event.eventKind,
-    year,
-    major ? "major-endurance" : cleanText(event.series || ""),
-    extractDurationToken(`${event.title} ${event.circuit}`) || "no-duration",
-    structuralEventToken(event.title || "") || "event",
-    canonicalEventTitle(event.title || "", event.circuit || ""),
-    canonicalCircuit(event.circuit || ""),
-    dateBucket,
-  ].join("|");
-}
-
-function scoreEvent(event: any) {
-  return [
-    event.sourceUrl ? 20 : 0,
-    event.country ? 5 : 0,
-    event.notes ? 3 : 0,
-    event.hasVerstappen ? 2 : 0,
-    event.hasBrazilian ? 2 : 0,
-    event.priority ? 4 - Number(event.priority) : 0,
-  ].reduce((sum, item) => sum + item, 0);
-}
-
 async function main() {
-  const events = await prisma.event.findMany({ orderBy: { startsAt: "asc" } });
-  const groups = new Map<string, typeof events>();
-
-  for (const event of events) {
-    const key = eventGroupKey(event);
-    const list = groups.get(key) || [];
-    list.push(event);
-    groups.set(key, list);
-  }
-
-  let mergedEvents = 0;
-  let movedStandings = 0;
-  let deletedEvents = 0;
-  let normalizedEvents = 0;
-
-  for (const group of Array.from(groups.values())) {
-    const sorted = [...group].sort((a, b) => scoreEvent(b) - scoreEvent(a));
-    const keeper = sorted[0];
-    const duplicates = sorted.slice(1);
-    const normalizedTitle = displayEventTitle(keeper.title, keeper.circuit);
-
-    if (keeper.title !== normalizedTitle) {
-      await prisma.event.update({
-        where: { id: keeper.id },
-        data: { title: normalizedTitle },
-      });
-      normalizedEvents++;
-    }
-
-    for (const duplicate of duplicates) {
-      const moved = await prisma.standing.updateMany({
-        where: { eventId: duplicate.id },
-        data: { eventId: keeper.id },
-      });
-      movedStandings += moved.count;
-
-      await prisma.event.update({
-        where: { id: keeper.id },
-        data: {
-          hasBrazilian: keeper.hasBrazilian || duplicate.hasBrazilian,
-          hasVerstappen: keeper.hasVerstappen || duplicate.hasVerstappen,
-          notes: keeper.notes || duplicate.notes,
-          sourceUrl: keeper.sourceUrl || duplicate.sourceUrl,
-        },
-      });
-
-      await prisma.event.delete({ where: { id: duplicate.id } });
-      mergedEvents++;
-      deletedEvents++;
-    }
-  }
-
-  const entryListMerge = await mergeDuplicateEntryLists();
-
-  const fixedStandings = await prisma.standing.updateMany({
-    data: { points: null, gap: null },
-  });
+  const mergedEvents = await mergeDuplicateEvents();
+  const { mergedStandings, normalizedStandings } = await mergeDuplicateEntryLists();
 
   console.log(
     JSON.stringify(
       {
         ok: true,
-        normalizedEvents,
         mergedEvents,
-        deletedEvents,
-        movedStandings,
-        mergedEntryLists: entryListMerge.mergedStandings,
-        normalizedEntryLists: entryListMerge.normalizedStandings,
-        entriesFixed: fixedStandings.count,
+        mergedStandings,
+        normalizedStandings,
       },
       null,
       2,

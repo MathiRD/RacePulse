@@ -1,4 +1,4 @@
-'use client';
+use client';
 
 import { CalendarDays, ExternalLink, Flag, MapPin, Star } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -46,6 +46,21 @@ function preferredCategory(categories: string[]) {
   );
 }
 
+function startOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function isSameLocalDay(a: Date, b: Date) {
+  return startOfLocalDay(a) === startOfLocalDay(b);
+}
+
+function getNextEventId(events: EventItem[]) {
+  const now = new Date();
+  return events
+    .filter((event) => new Date(event.startsAt).getTime() >= now.getTime())
+    .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())[0]?.id;
+}
+
 export function EventGrid({ events }: { events: EventItem[] }) {
   const [q, setQ] = useState('');
   const [category, setCategory] = useState('');
@@ -56,6 +71,7 @@ export function EventGrid({ events }: { events: EventItem[] }) {
   );
 
   const selectedCategory = category || preferredCategory(categories);
+  const nextEventId = useMemo(() => getNextEventId(events), [events]);
 
   const filtered = events.filter((event) => {
     const hay = `${event.title} ${event.series} ${event.category} ${event.circuit} ${event.country} ${event.eventKind}`.toLowerCase();
@@ -76,12 +92,22 @@ export function EventGrid({ events }: { events: EventItem[] }) {
         <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((event) => {
             const isEsport = event.eventKind === 'ESPORT';
+            const eventDate = new Date(event.startsAt);
+            const isToday = isSameLocalDay(eventDate, new Date());
+            const isNext = !isToday && event.id === nextEventId;
+
+            const cardStateClass = isToday
+              ? 'border border-emerald-300/60 bg-emerald-400/15 shadow-[0_0_35px_rgba(52,211,153,0.18)] light:bg-emerald-100/90'
+              : isNext
+                ? 'border border-sky-300/50 bg-sky-400/10 shadow-[0_0_32px_rgba(56,189,248,0.14)] light:bg-sky-100/80'
+                : isEsport
+                  ? 'border border-fuchsia-400/40 bg-fuchsia-950/30 light:bg-fuchsia-100/80'
+                  : '';
+
             return (
               <article
                 key={event.id}
-                className={`glass group min-w-0 overflow-hidden rounded-3xl p-5 transition hover:-translate-y-1 hover:shadow-2xl ${
-                  isEsport ? 'border border-fuchsia-400/40 bg-fuchsia-950/30 light:bg-fuchsia-100/80' : ''
-                }`}
+                className={`glass group min-w-0 overflow-hidden rounded-3xl p-5 transition hover:-translate-y-1 hover:shadow-2xl ${cardStateClass}`}
               >
                 <div className="mb-4 flex min-w-0 items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -93,11 +119,13 @@ export function EventGrid({ events }: { events: EventItem[] }) {
                   <span className="pill flex shrink-0 items-center gap-1"><Star size={13} />P{event.priority}</span>
                 </div>
                 <div className="space-y-3 text-sm text-slate-300 light:text-slate-700">
-                  <p className="flex min-w-0 items-start gap-2"><CalendarDays className="mt-0.5 shrink-0" size={16} /><span className="break-words">{new Date(event.startsAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })}</span></p>
+                  <p className="flex min-w-0 items-start gap-2"><CalendarDays className="mt-0.5 shrink-0" size={16} /><span className="break-words">{eventDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })}</span></p>
                   <p className="flex min-w-0 items-start gap-2"><MapPin className="mt-0.5 shrink-0" size={16} /><span className="break-words">{event.circuit}{event.country ? `, ${event.country}` : ''}</span></p>
                   <p className="flex min-w-0 items-start gap-2"><Flag className="mt-0.5 shrink-0" size={16} /><span className="break-words">{event.category}</span></p>
                 </div>
                 <div className="mt-5 flex min-w-0 flex-wrap gap-2">
+                  {isToday && <span className="pill border-emerald-300/60 bg-emerald-300/20 text-emerald-100 light:text-emerald-800">Hoje</span>}
+                  {isNext && <span className="pill border-sky-300/60 bg-sky-300/20 text-sky-100 light:text-sky-800">Próximo evento</span>}
                   {isEsport && <span className="pill border-fuchsia-300/50 bg-fuchsia-400/20 text-fuchsia-100 light:text-fuchsia-800">Virtual / Esport</span>}
                   {event.hasVerstappen && <span className="pill border-violet-400/40 bg-violet-400/15">Verstappen</span>}
                   {event.hasBrazilian && <span className="pill border-yellow-300/40 bg-yellow-300/15">Brasileiro</span>}
